@@ -283,6 +283,106 @@ Postgres data lives in Docker volumes. Renaming containers or networks does not 
 4. Update all docs and README files
 5. Update memory files
 
+### Standard project scripts
+
+Every project must include these scripts that work on any environment:
+
+#### `scripts/create-admin.js`
+
+Interactive script to create the first SUPER_ADMIN user. Runs inside the API container. Idempotent — skips if users already exist.
+
+```bash
+docker exec -it {project}-api node scripts/create-admin.js
+```
+
+Must be copied into the Dockerfile:
+```dockerfile
+COPY scripts/ ./scripts/
+```
+
+#### `scripts/start.sh`
+
+Root entry point to start the project. Detects environment and runs the right compose:
+
+```bash
+#!/bin/bash
+set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_DIR"
+
+if [ -f docker-compose.prod.yml ] && [ "$NODE_ENV" = "production" ]; then
+    docker compose -f docker-compose.prod.yml up -d --build
+else
+    docker compose up -d --build
+fi
+```
+
+Or simpler — just use the right compose file:
+```bash
+# Dev
+./scripts/start.sh
+
+# Prod (on server)
+NODE_ENV=production ./scripts/start.sh
+```
+
+### `.env` management
+
+**Problem:** Setting up `.env` on a new server is manual, error-prone, and requires copy-pasting from Bitwarden.
+
+**Solution:** One `.env.example` with clear sections:
+
+```env
+# =============================================================================
+# Environment-specific — CHANGE THESE PER SERVER
+# =============================================================================
+DOMAIN=marie.local
+DATABASE_URL=postgresql://postgres:postgres@postgres:5432/marie
+FRONTEND_URL=https://${DOMAIN}
+ENTRA_REDIRECT_URI=https://${DOMAIN}/api/auth/entra/callback
+
+# =============================================================================
+# Secrets — GENERATE ONCE, STORE IN BITWARDEN
+# =============================================================================
+JWT_SECRET=
+OPENAI_API_KEY=
+ENTRA_CLIENT_ID=
+ENTRA_CLIENT_SECRET=
+ENTRA_TENANT_ID=
+
+# =============================================================================
+# Defaults — USUALLY DON'T CHANGE
+# =============================================================================
+JWT_EXPIRES_IN_SECONDS=604800
+PORT=3000
+NODE_ENV=production
+NOTIFICATIONS_ENABLED=false
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
+LANGFUSE_SECRET_KEY=
+LANGFUSE_PUBLIC_KEY=
+RESEND_API_KEY=
+RESEND_FROM_ADDRESS=Marie <onboarding@resend.dev>
+```
+
+**Key ideas:**
+- Three clear sections: environment-specific, secrets, defaults
+- `DOMAIN` is the single variable that drives routing, frontend URL, and callback URLs
+- `FRONTEND_URL` and `ENTRA_REDIRECT_URI` reference `${DOMAIN}` in the example so you see the pattern — but `.env` files don't support variable interpolation, so the actual values must be written out
+- Secrets section tells you exactly what to generate/fetch from Bitwarden
+- Defaults section rarely changes — copy as-is
+
+**Future improvement:** A `scripts/setup-env.sh` that prompts for the environment-specific values and generates the `.env`:
+
+```bash
+./scripts/setup-env.sh
+# Domain [marie.local]: marie.lostriver.llc
+# Postgres password: ****
+# JWT secret (leave blank to generate): 
+# OpenAI API key: sk-...
+# → .env created
+```
+
 ## Decisions made
 
 1. **Infra repo name:** `jordimo/infra` — server-agnostic
