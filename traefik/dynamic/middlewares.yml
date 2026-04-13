@@ -1,0 +1,6 @@
+http:
+  middlewares:
+    # Strip the path prefix before forwarding to the container.
+    # Each project uses its own strip-prefix middleware (defined in project.sh).
+    # This file is reserved for shared middlewares.
+    {}

@@ -1,0 +1,100 @@
+# =============================================================================
+# THECOLLECTIVE_AWS01 — Shared Infrastructure
+# =============================================================================
+# Shared services for all deployed projects:
+#   - Traefik: Reverse proxy, path-based routing on public IP
+#   - PostgreSQL: Shared database (create DB per project)
+#   - Redis: Shared cache (use DB 0-15 per project)
+#
+# Usage:
+#   docker compose up -d          # Start all services
+#   docker compose down           # Stop all services
+#
+# Projects connect via the 'traefik-public' Docker network.
+#
+# PostgreSQL:
+#   Host: postgres:5432 (from containers)
+#   User: postgres / Password: ${POSTGRES_PASSWORD}
+#   Create DBs per project: CREATE DATABASE myproject;
+#
+# Redis:
+#   Host: redis:6379 (from containers)
+#   Use different DB numbers per project (0-15)
+#
+# Routing:
+#   http://<IP>/project-name      → project web container
+#   http://<IP>/project-name/api  → project api container
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Traefik - Reverse Proxy
+  # ---------------------------------------------------------------------------
+  traefik:
+    image: traefik:v3.2
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - --api.dashboard=true
+      - --api.insecure=true
+      - --entrypoints.web.address=:80
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=traefik-public
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
+      - --log.level=INFO
+    ports:
+      - "80:80"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./dynamic:/etc/traefik/dynamic:ro
+    networks:
+      - traefik-public
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL - Shared Database
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - traefik-public
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Redis - Shared Cache
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - traefik-public
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  traefik-public:
+    name: traefik-public
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
