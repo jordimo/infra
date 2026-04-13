@@ -285,47 +285,117 @@ Postgres data lives in Docker volumes. Renaming containers or networks does not 
 
 ### Standard project scripts
 
-Every project must include these scripts that work on any environment:
+**Convention:** All scripts are `.sh` files that run from the command line on the host. If a script needs Node/Python internals (e.g. bcrypt for password hashing), the `.sh` script handles `docker exec` internally — the user never touches `.js` files directly.
 
-#### `scripts/create-admin.js`
-
-Interactive script to create the first SUPER_ADMIN user. Runs inside the API container. Idempotent — skips if users already exist.
-
-```bash
-docker exec -it {project}-api node scripts/create-admin.js
-```
-
-Must be copied into the Dockerfile:
-```dockerfile
-COPY scripts/ ./scripts/
-```
+Every project must include:
 
 #### `scripts/start.sh`
 
-Root entry point to start the project. Detects environment and runs the right compose:
+Start the project. Detects environment automatically:
 
 ```bash
 #!/bin/bash
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-cd "$PROJECT_DIR"
+cd "$SCRIPT_DIR/.."
 
-if [ -f docker-compose.prod.yml ] && [ "$NODE_ENV" = "production" ]; then
+if [ -f docker-compose.prod.yml ] && [ "${NODE_ENV:-}" = "production" ]; then
     docker compose -f docker-compose.prod.yml up -d --build
 else
     docker compose up -d --build
 fi
 ```
 
-Or simpler — just use the right compose file:
+Usage:
 ```bash
-# Dev
-./scripts/start.sh
-
-# Prod (on server)
-NODE_ENV=production ./scripts/start.sh
+./scripts/start.sh              # local dev
+NODE_ENV=production ./scripts/start.sh  # production server
 ```
+
+#### `scripts/stop.sh`
+
+```bash
+#!/bin/bash
+set -e
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+if [ -f docker-compose.prod.yml ] && [ "${NODE_ENV:-}" = "production" ]; then
+    docker compose -f docker-compose.prod.yml down
+else
+    docker compose down
+fi
+```
+
+#### `scripts/create-admin.sh`
+
+Interactive — prompts for email, name, password. Idempotent (skips if users exist). Runs from the host, executes inside the API container:
+
+```bash
+#!/bin/bash
+set -e
+PROJECT=$(basename "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)")
+CONTAINER="${PROJECT}-api"
+
+# Check container is running
+if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
+    echo "Error: ${CONTAINER} is not running. Start the project first."
+    exit 1
+fi
+
+# Prompt for details
+read -rp "Admin email: " EMAIL
+read -rp "Admin name: " NAME
+read -rsp "Password (min 8 chars): " PASSWORD
+echo ""
+
+# Run inside the container — JS is an implementation detail
+docker exec -i "$CONTAINER" node -e "
+const bcrypt = require('bcrypt');
+const crypto = require('crypto');
+const { Client } = require('pg');
+(async () => {
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  const existing = await client.query('SELECT count(*) FROM users');
+  if (parseInt(existing.rows[0].count) > 0) {
+    console.log('Users already exist (' + existing.rows[0].count + ' found). Skipping.');
+    await client.end();
+    return;
+  }
+  const hash = await bcrypt.hash(process.argv[1], 12);
+  const tid = crypto.randomUUID();
+  await client.query('BEGIN');
+  await client.query(\"INSERT INTO tenants (id, name, slug) VALUES (\\\$1, 'The Collective', 'default')\", [tid]);
+  await client.query(\"INSERT INTO users (id, tenant_id, email, name, password_hash, auth_provider, role) VALUES (\\\$1,\\\$2,\\\$3,\\\$4,\\\$5,'LOCAL','SUPER_ADMIN')\",
+    [crypto.randomUUID(), tid, process.argv[2], process.argv[3], hash]);
+  await client.query('COMMIT');
+  await client.end();
+  console.log('Admin created: ' + process.argv[2]);
+})().catch(e => { console.error(e.message); process.exit(1); });
+" "$PASSWORD" "$EMAIL" "$NAME"
+```
+
+Usage:
+```bash
+./scripts/create-admin.sh
+# Admin email: jordi@lostriver.llc
+# Admin name: Jordi
+# Password: ********
+# Admin created: jordi@lostriver.llc
+```
+
+#### `scripts/migrate.sh`
+
+```bash
+#!/bin/bash
+set -e
+PROJECT=$(basename "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)")
+docker exec -w /app/apps/api "${PROJECT}-api" npx drizzle-kit migrate
+```
+
+#### `scripts/setup-env.sh`
+
+Interactive `.env` generator (see `.env` management section below).
 
 ### `.env` management
 
