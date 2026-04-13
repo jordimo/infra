@@ -11,15 +11,19 @@
 #
 # Prerequisites:
 #   - VPN connected
-#   - SSH key configured for the VM
+#   - SSH alias 'aws01' configured in ~/.ssh/config:
+#
+#       Host aws01
+#           HostName 10.251.8.172
+#           User ubuntu
+#           IdentityFile ~/.ssh/AWSNMTNAPP001-keypair.pem
+#
 # =============================================================================
 
 set -e
 
-VM_USER="${VM_USER:-ubuntu}"
-VM_HOST="52.72.211.242"
+VM="${VM:-aws01}"
 VM_APP_DIR="/app"
-REPO_URL="${REPO_URL:-git@github.com:THECOLLECTIVE/Deployer.git}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -28,7 +32,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 ssh_cmd() {
-    ssh "${VM_USER}@${VM_HOST}" "$@"
+    ssh "$VM" "$@"
 }
 
 deploy_infra() {
@@ -51,7 +55,7 @@ deploy_project() {
     echo -e "${CYAN}[${name}] Rebuilding containers...${NC}"
     ssh_cmd "cd ${project_dir} && docker compose up -d --build"
 
-    echo -e "${GREEN}[${name}] Done — http://${VM_HOST}/${name}${NC}"
+    echo -e "${GREEN}[${name}] Done — http://52.72.211.242/${name}${NC}"
 }
 
 deploy_all() {
