@@ -145,7 +145,7 @@ services:
   #   3. Add a website → copy the tracking script to your app's <head>
   #   4. For custom events (Mac apps), use the POST /api/send endpoint
   umami:
-    image: ghcr.io/umami-software/umami:postgresql-latest
+    image: docker.umami.is/umami-software/umami:postgresql-latest
     container_name: umami
     restart: unless-stopped
     environment:
