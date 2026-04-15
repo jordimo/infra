@@ -1,8 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# One-time setup for THECOLLECTIVE_AWS01
-# =============================================================================
-# Run this once on the VM after first clone.
+# One-time setup — Run after first clone on any machine
 # =============================================================================
 
 set -e
@@ -15,7 +13,7 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-echo -e "${CYAN}=== THECOLLECTIVE_AWS01 Setup ===${NC}"
+echo -e "${CYAN}=== Infrastructure Setup ===${NC}"
 echo ""
 
 # ---- Docker check ----
@@ -28,33 +26,33 @@ if ! docker compose version &> /dev/null; then
     echo -e "${RED}Docker Compose V2 not found. Update Docker.${NC}"
     exit 1
 fi
-echo -e "  ${GREEN}Docker $(docker --version | grep -oP '\d+\.\d+\.\d+') OK${NC}"
+echo -e "  ${GREEN}Docker $(docker --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+') OK${NC}"
 
 # ---- .env file ----
 echo ""
 echo -e "${CYAN}[2/3] Checking .env...${NC}"
-if [ ! -f "$SCRIPT_DIR/traefik/.env" ]; then
-    cp "$SCRIPT_DIR/traefik/.env.example" "$SCRIPT_DIR/traefik/.env"
-    echo -e "  ${YELLOW}Created traefik/.env from .env.example${NC}"
-    echo -e "  ${YELLOW}>>> Edit traefik/.env and set a strong POSTGRES_PASSWORD <<<${NC}"
+if [ ! -f "$SCRIPT_DIR/.env" ]; then
+    echo -e "  ${YELLOW}No .env file found.${NC}"
+    echo -e "  ${YELLOW}Run: ${GREEN}cp .env.example .env${NC}"
+    echo -e "  ${YELLOW}Local dev defaults work out of the box.${NC}"
 else
-    echo -e "  ${GREEN}traefik/.env exists${NC}"
+    echo -e "  ${GREEN}.env exists${NC}"
 fi
 
 # ---- Create network ----
 echo ""
-echo -e "${CYAN}[3/3] Creating Docker network...${NC}"
-if docker network inspect traefik-public &>/dev/null; then
-    echo -e "  ${GREEN}traefik-public network already exists${NC}"
+echo -e "${CYAN}[3/3] Checking Docker network...${NC}"
+if docker network inspect infra &>/dev/null; then
+    echo -e "  ${GREEN}infra network already exists${NC}"
 else
-    docker network create traefik-public
-    echo -e "  ${GREEN}Created traefik-public network${NC}"
+    docker network create infra
+    echo -e "  ${GREEN}Created infra network${NC}"
 fi
 
 echo ""
 echo -e "${GREEN}=== Setup Complete ===${NC}"
 echo ""
 echo "  Next steps:"
-echo "    1. Edit traefik/.env with a strong POSTGRES_PASSWORD"
+echo "    1. Ensure .env is configured (see above)"
 echo "    2. ./start.sh"
 echo ""

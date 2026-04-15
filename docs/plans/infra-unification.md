@@ -262,16 +262,16 @@ apps:
     db: newsintel
     redis_db: 2
 
-  company-intel:
+  UPS_company_intel:
     repo: jordimo/company-intel
     domain:
-      do: company-intel.lostriver.llc
+      do: intel.lostriver.llc
       local: company-intel.local
     containers:
       api: { port: 8000 }
       web: { port: 80 }
       worker: {}
-    db: company_intel
+    db: company_intel_db
     redis_db: 3
 
   vaultwarden:
