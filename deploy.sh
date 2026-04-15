@@ -1,35 +1,23 @@
 #!/bin/bash
 # =============================================================================
-# Deploy to THECOLLECTIVE_AWS01
+# Deploy a project or infra
 # =============================================================================
-# Run from the corporate laptop (VPN connected).
-#
 # Usage:
-#   ./deploy.sh infra              # Deploy infra (pull + restart)
-#   ./deploy.sh <project-name>     # Pull latest + rebuild project
-#   ./deploy.sh --all              # Deploy infra + all projects
+#   ./deploy.sh --target <target> <project>   Deploy a project
+#   ./deploy.sh --target <target> infra        Deploy infra (git pull + restart)
+#   ./deploy.sh --target <target> --all        Deploy infra + all projects
 #
 # Examples:
-#   ./deploy.sh infra
-#   ./deploy.sh marie
-#
-# Prerequisites:
-#   - VPN connected
-#   - SSH alias 'aws01' configured in ~/.ssh/config:
-#
-#       Host aws01
-#           HostName 10.251.8.172
-#           User ubuntu
-#           IdentityFile ~/.ssh/AWSNMTNAPP001-keypair.pem
-#
-#   - Deploy keys configured on the VM for each private repo
+#   ./deploy.sh --target do:isidora marie
+#   ./deploy.sh --target do:isidora infra
+#   ./deploy.sh --target do:isidora --all
+#   ./deploy.sh --target aws marie
 #
 # =============================================================================
 
 set -e
 
-VM="${VM:-aws01}"
-VM_APP_DIR="/app"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -37,57 +25,132 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-ssh_cmd() {
-    ssh "$VM" "$@"
+usage() {
+    echo "Usage: ./deploy.sh --target <target> <project|infra|--all>"
+    echo ""
+    echo "Targets:"
+    echo "  do:<droplet>   DigitalOcean (e.g. do:isidora)"
+    echo "  aws            AWS (aws01)"
+    echo ""
+    echo "Examples:"
+    echo "  ./deploy.sh --target do:isidora marie"
+    echo "  ./deploy.sh --target do:isidora infra"
+    echo "  ./deploy.sh --target do:isidora --all"
+    exit 1
 }
+
+# ---- Parse args ----
+TARGET=""
+ACTION=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --target) TARGET="$2"; shift 2 ;;
+        --all) ACTION="all"; shift ;;
+        -*) echo "Unknown option: $1"; usage ;;
+        *) ACTION="$1"; shift ;;
+    esac
+done
+
+[ -z "$TARGET" ] && { echo -e "${RED}Error: --target is required${NC}"; echo ""; usage; }
+[ -z "$ACTION" ] && usage
+
+# ---- Environment config ----
+case "$TARGET" in
+    do:*)
+        REMOTE="${TARGET#do:}"
+        INFRA_DIR="/home/deploy/infra"
+        APP_DIR="/home/deploy"
+        COMPOSE_FILE="docker-compose.prod.yml"
+        ;;
+    aws)
+        REMOTE="aws01"
+        INFRA_DIR="/app/Deployer"
+        APP_DIR="/app"
+        COMPOSE_FILE="docker-compose.prod.yml"
+        ;;
+    *)
+        echo -e "${RED}Error: Unknown target '${TARGET}'. Use do:<droplet> or aws.${NC}"
+        exit 1
+        ;;
+esac
+
+ssh_cmd() { ssh "$REMOTE" "$@"; }
 
 deploy_infra() {
     echo -e "${CYAN}[infra] Pulling latest...${NC}"
-    ssh_cmd "cd ${VM_APP_DIR}/Deployer && git pull"
+    ssh_cmd "cd ${INFRA_DIR} && git pull"
 
-    echo -e "${CYAN}[infra] Starting infrastructure...${NC}"
-    ssh_cmd "cd ${VM_APP_DIR}/Deployer && ./start.sh"
+    echo -e "${CYAN}[infra] Restarting services...${NC}"
+    ssh_cmd "cd ${INFRA_DIR} && docker compose up -d"
 
     echo -e "${GREEN}[infra] Done${NC}"
 }
 
 deploy_project() {
     local name="$1"
-    local project_dir="${VM_APP_DIR}/${name}"
+    local project_dir="${APP_DIR}/${name}"
+
+    # Check project exists
+    if ! ssh_cmd "test -d ${project_dir}"; then
+        echo -e "${RED}[${name}] Directory ${project_dir} not found.${NC}"
+        echo ""
+        echo "  To set up this project for the first time, run:"
+        echo "    ./init-project.sh ${name} --target ${TARGET} --repo <git-url>"
+        echo ""
+        return 1
+    fi
+
+    # Check compose file exists
+    if ! ssh_cmd "test -f ${project_dir}/${COMPOSE_FILE}"; then
+        # Try docker-compose.yml as fallback
+        if ssh_cmd "test -f ${project_dir}/docker-compose.yml"; then
+            COMPOSE_FILE="docker-compose.yml"
+        else
+            echo -e "${RED}[${name}] No compose file found at ${project_dir}/${COMPOSE_FILE}${NC}"
+            echo ""
+            echo "  The project needs a ${COMPOSE_FILE}. See the README for the template."
+            echo ""
+            return 1
+        fi
+    fi
 
     echo -e "${CYAN}[${name}] Pulling latest...${NC}"
     ssh_cmd "cd ${project_dir} && git pull"
 
     echo -e "${CYAN}[${name}] Rebuilding containers...${NC}"
-    ssh_cmd "cd ${project_dir} && docker compose -f docker-compose.vm.yml up -d --build"
+    ssh_cmd "cd ${project_dir} && docker compose -f ${COMPOSE_FILE} up -d --build"
 
-    echo -e "${GREEN}[${name}] Done — http://52.72.211.242/${name}${NC}"
+    echo -e "${GREEN}[${name}] Done${NC}"
 }
 
 deploy_all() {
     deploy_infra
-
     echo ""
+
+    # Find all projects with a compose file
     local projects
-    projects=$(ssh_cmd "find ${VM_APP_DIR} -maxdepth 2 -name 'docker-compose.vm.yml' -exec dirname {} \;" 2>/dev/null)
+    projects=$(ssh_cmd "ls -d ${APP_DIR}/*/docker-compose*.yml 2>/dev/null | xargs -I{} dirname {} | sort -u" || true)
 
     for project_dir in $projects; do
         local name=$(basename "$project_dir")
+        # Skip infra directory
+        [ "$name" = "infra" ] && continue
         echo ""
         deploy_project "$name"
     done
 }
 
 # ---- Main ----
-case "${1:-}" in
-    ""|infra)
+case "$ACTION" in
+    infra)
         deploy_infra
         ;;
-    --all)
+    all)
         deploy_all
         ;;
     *)
-        deploy_project "$1"
+        deploy_project "$ACTION"
         ;;
 esac
 
