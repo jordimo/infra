@@ -2,3 +2,9 @@
 traefik/.env
 .claude/
 backups/
+certs/
+
+# Local-only Traefik configs (mkcert TLS, per-project routing)
+# Committed: dynamic/dynamic.yml, dynamic/middlewares.yml
+dynamic/tls.yml
+dynamic/routing-*.yml
