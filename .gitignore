@@ -1,2 +1,4 @@
+.env
 traefik/.env
 .claude/
+backups/

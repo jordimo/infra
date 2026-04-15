@@ -1,0 +1,65 @@
+# Traefik Dynamic Configuration
+# Health check endpoint, security headers, rate limiting
+
+http:
+  routers:
+    health-check:
+      rule: "Path(`/health`)"
+      service: api-health
+      middlewares:
+        - health-rewrite
+      entryPoints:
+        - web
+
+  services:
+    api-health:
+      loadBalancer:
+        servers:
+          - url: "http://caitie-api:3000"
+        healthCheck:
+          path: "/api/health"
+          interval: "10s"
+          timeout: "3s"
+
+  middlewares:
+    # Health check path rewrite
+    health-rewrite:
+      replacePathRegex:
+        regex: "^/health$"
+        replacement: "/api/health"
+
+    # Rate limiting middleware
+    rate-limit:
+      rateLimit:
+        average: 100
+        burst: 200
+        period: 1s
+
+    # Security headers
+    security-headers:
+      headers:
+        frameDeny: true
+        browserXssFilter: true
+        contentTypeNosniff: true
+        forceSTSHeader: true
+        stsIncludeSubdomains: true
+        stsPreload: true
+        stsSeconds: 31536000
+        referrerPolicy: "strict-origin-when-cross-origin"
+        permissionsPolicy: "camera=(), microphone=(), geolocation=()"
+        customResponseHeaders:
+          X-Powered-By: ""
+
+    # Compression
+    compress:
+      compress: {}
+
+# TLS options
+tls:
+  options:
+    default:
+      minVersion: VersionTLS12
+      cipherSuites:
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
