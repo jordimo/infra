@@ -8,19 +8,19 @@
 #   ./init-project.sh <name> [options]
 #
 # Examples:
-#   # Local — project already cloned at ~/Dev/THECOLLECTIVE/Acme
-#   ./init-project.sh acme --dir ~/Dev/THECOLLECTIVE/Acme
+#   # Local
+#   ./init-project.sh acme --target local --dir ~/Dev/THECOLLECTIVE/Acme
 #
-#   # DO — clone from GitHub
-#   ./init-project.sh acme --target do --repo git@github.com:jordimo/Acme.git
+#   # DO (isidora) — clone from GitHub
+#   ./init-project.sh acme --target do:isidora --repo git@github.com:jordimo/Acme.git
 #
-#   # DO — project already on server
-#   ./init-project.sh acme --target do --dir /home/deploy/acme
+#   # DO (isidora) — project already on server
+#   ./init-project.sh acme --target do:isidora --dir /home/deploy/acme
 #
 # Options:
-#   --target <local|do|aws>   Environment (default: local)
+#   --target <target>          Required. One of: local, do:<droplet>, aws
 #   --dir <path>              Project directory (required for local, optional for servers)
-#   --repo <git-url>          Git repo URL (clones to server if not already there)
+#   --repo <git-url>          Git repo URL (clones if dir doesn't exist)
 #   --db <name>               Database name (default: project name)
 #
 # What it does:
@@ -54,17 +54,21 @@ warn()  { echo -e "${YELLOW}!${NC} $1"; }
 fail()  { echo -e "${RED}✗${NC} $1"; exit 1; }
 
 usage() {
-    echo "Usage: ./init-project.sh <name> [options]"
+    echo "Usage: ./init-project.sh <name> --target <target> [options]"
+    echo ""
+    echo "Targets:"
+    echo "  local            Local dev"
+    echo "  do:<droplet>     DigitalOcean (e.g. do:isidora)"
+    echo "  aws              AWS (aws01)"
     echo ""
     echo "Options:"
-    echo "  --target <local|do|aws>   Environment (default: local)"
-    echo "  --dir <path>              Project directory"
-    echo "  --repo <git-url>          Git repo URL (for cloning on servers)"
-    echo "  --db <name>               Database name (default: project name)"
+    echo "  --dir <path>     Project directory (required for local)"
+    echo "  --repo <git-url> Git repo URL (clones if dir doesn't exist)"
+    echo "  --db <name>      Database name (default: project name)"
     echo ""
     echo "Examples:"
-    echo "  ./init-project.sh acme --dir ~/Dev/Acme"
-    echo "  ./init-project.sh acme --target do --repo git@github.com:jordimo/Acme.git"
+    echo "  ./init-project.sh acme --target local --dir ~/Dev/Acme"
+    echo "  ./init-project.sh acme --target do:isidora --repo git@github.com:jordimo/Acme.git"
     exit 1
 }
 
@@ -74,7 +78,7 @@ usage() {
 NAME="$1"
 shift
 
-TARGET="local"
+TARGET=""
 PROJECT_DIR=""
 REPO_URL=""
 DB_NAME=""
@@ -89,6 +93,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+[ -z "$TARGET" ] && fail "--target is required (local, do:<droplet>, or aws)"
+
 DB_NAME="${DB_NAME:-$NAME}"
 
 # ---- Environment config ----
@@ -101,8 +107,8 @@ case "$TARGET" in
             fail "Local target requires --dir <path> (e.g. --dir ~/Dev/Acme)"
         fi
         ;;
-    do)
-        REMOTE="isidora"
+    do:*)
+        REMOTE="${TARGET#do:}"
         COMPOSE_FILE="docker-compose.prod.yml"
         DOMAIN="${NAME}.lostriver.llc"
         PROJECT_DIR="${PROJECT_DIR:-/home/deploy/${NAME}}"
@@ -114,7 +120,7 @@ case "$TARGET" in
         PROJECT_DIR="${PROJECT_DIR:-/app/${NAME}}"
         ;;
     *)
-        fail "Unknown target: ${TARGET}. Use local, do, or aws."
+        fail "Unknown target: ${TARGET}. Use local, do:<droplet>, or aws."
         ;;
 esac
 
@@ -347,10 +353,10 @@ case "$TARGET" in
         echo "  URL: https://${DOMAIN}"
         echo "  API: https://${DOMAIN}/api"
         ;;
-    do)
+    do:*)
         echo "  URL: https://${DOMAIN}"
         echo "  API: https://${DOMAIN}/api"
-        echo "  Deploy: ./deploy.sh do ${NAME}"
+        echo "  Deploy: ./deploy.sh ${REMOTE} ${NAME}"
         ;;
     aws)
         echo "  URL: http://52.72.211.242/${NAME}"
