@@ -5,12 +5,23 @@
 # Works on any environment: local dev, DO (isidora), AWS (aws01).
 #
 # Usage:
-#   ./init-project.sh <name> <git-repo-url> [--target <local|do|aws>]
+#   ./init-project.sh <name> [options]
 #
 # Examples:
-#   ./init-project.sh acme git@github.com:jordimo/Acme.git --target do
-#   ./init-project.sh acme git@github.com:jordimo/Acme.git --target local
-#   ./init-project.sh acme git@github.com:jordimo/Acme.git --target aws
+#   # Local — project already cloned at ~/Dev/THECOLLECTIVE/Acme
+#   ./init-project.sh acme --dir ~/Dev/THECOLLECTIVE/Acme
+#
+#   # DO — clone from GitHub
+#   ./init-project.sh acme --target do --repo git@github.com:jordimo/Acme.git
+#
+#   # DO — project already on server
+#   ./init-project.sh acme --target do --dir /home/deploy/acme
+#
+# Options:
+#   --target <local|do|aws>   Environment (default: local)
+#   --dir <path>              Project directory (required for local, optional for servers)
+#   --repo <git-url>          Git repo URL (clones to server if not already there)
+#   --db <name>               Database name (default: project name)
 #
 # What it does:
 #   1. Creates a PostgreSQL database
@@ -28,6 +39,9 @@
 
 set -euo pipefail
 
+# Where this script lives (= the infra repo)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -40,51 +54,64 @@ warn()  { echo -e "${YELLOW}!${NC} $1"; }
 fail()  { echo -e "${RED}✗${NC} $1"; exit 1; }
 
 usage() {
-    echo "Usage: ./init-project.sh <name> <git-repo-url> [--target <local|do|aws>]"
+    echo "Usage: ./init-project.sh <name> [options]"
     echo ""
-    echo "Targets:"
-    echo "  local   Local dev (default)"
-    echo "  do      DigitalOcean (isidora)"
-    echo "  aws     AWS (aws01)"
+    echo "Options:"
+    echo "  --target <local|do|aws>   Environment (default: local)"
+    echo "  --dir <path>              Project directory"
+    echo "  --repo <git-url>          Git repo URL (for cloning on servers)"
+    echo "  --db <name>               Database name (default: project name)"
+    echo ""
+    echo "Examples:"
+    echo "  ./init-project.sh acme --dir ~/Dev/Acme"
+    echo "  ./init-project.sh acme --target do --repo git@github.com:jordimo/Acme.git"
     exit 1
 }
 
 # ---- Parse args ----
-[[ $# -lt 2 ]] && usage
+[[ $# -lt 1 ]] && usage
 
 NAME="$1"
-REPO_URL="$2"
-shift 2
+shift
 
 TARGET="local"
+PROJECT_DIR=""
+REPO_URL=""
+DB_NAME=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --target) TARGET="$2"; shift 2 ;;
+        --dir) PROJECT_DIR="$2"; shift 2 ;;
+        --repo) REPO_URL="$2"; shift 2 ;;
+        --db) DB_NAME="$2"; shift 2 ;;
         *) echo "Unknown option: $1"; usage ;;
     esac
 done
+
+DB_NAME="${DB_NAME:-$NAME}"
 
 # ---- Environment config ----
 case "$TARGET" in
     local)
         REMOTE=""
-        PROJECT_DIR="$HOME/Dev/${NAME}"
         COMPOSE_FILE="docker-compose.yml"
         DOMAIN="${NAME}.local"
-        LOCAL_INFRA_DIR="$HOME/Dev/local-infra"
+        if [ -z "$PROJECT_DIR" ]; then
+            fail "Local target requires --dir <path> (e.g. --dir ~/Dev/Acme)"
+        fi
         ;;
     do)
         REMOTE="isidora"
-        PROJECT_DIR="/home/deploy/${NAME}"
         COMPOSE_FILE="docker-compose.prod.yml"
         DOMAIN="${NAME}.lostriver.llc"
+        PROJECT_DIR="${PROJECT_DIR:-/home/deploy/${NAME}}"
         ;;
     aws)
         REMOTE="aws01"
-        PROJECT_DIR="/app/${NAME}"
         COMPOSE_FILE="docker-compose.prod.yml"
         DOMAIN=""
+        PROJECT_DIR="${PROJECT_DIR:-/app/${NAME}}"
         ;;
     *)
         fail "Unknown target: ${TARGET}. Use local, do, or aws."
@@ -101,38 +128,46 @@ run() {
 
 echo ""
 echo -e "${CYAN}=== Initializing '${NAME}' on ${TARGET} ===${NC}"
+echo -e "  Directory: ${PROJECT_DIR}"
+[ -n "$DOMAIN" ] && echo -e "  Domain:    ${DOMAIN}"
+echo -e "  Database:  ${DB_NAME}"
 echo ""
 
 # ---------------------------------------------------------------------------
 # 1. Create database
 # ---------------------------------------------------------------------------
-info "Checking database '${NAME}'..."
-DB_EXISTS=$(run "docker exec postgres psql -U postgres -tAc \"SELECT 1 FROM pg_database WHERE datname = '${NAME}'\"" 2>/dev/null || true)
+info "Checking database '${DB_NAME}'..."
+DB_EXISTS=$(run "docker exec postgres psql -U postgres -tAc \"SELECT 1 FROM pg_database WHERE datname = '${DB_NAME}'\"" 2>/dev/null || true)
 
 if [ "$DB_EXISTS" = "1" ]; then
-    ok "Database '${NAME}' already exists"
+    ok "Database '${DB_NAME}' already exists"
 else
-    run "docker exec postgres psql -U postgres -c 'CREATE DATABASE \"${NAME}\";'" >/dev/null
-    ok "Database '${NAME}' created"
+    run "docker exec postgres psql -U postgres -c 'CREATE DATABASE \"${DB_NAME}\";'" >/dev/null
+    ok "Database '${DB_NAME}' created"
 fi
 
 # ---------------------------------------------------------------------------
-# 2. Clone repo (servers) or verify it exists (local)
+# 2. Clone repo or verify it exists
 # ---------------------------------------------------------------------------
 if [ -n "$REMOTE" ]; then
-    info "Cloning repo on ${TARGET}..."
     if run "test -d ${PROJECT_DIR}"; then
-        ok "Directory ${PROJECT_DIR} already exists — skipping clone"
-    else
+        ok "Directory ${PROJECT_DIR} already exists"
+    elif [ -n "$REPO_URL" ]; then
+        info "Cloning repo on ${TARGET}..."
         run "git clone ${REPO_URL} ${PROJECT_DIR}"
         ok "Cloned to ${PROJECT_DIR}"
+    else
+        fail "Directory ${PROJECT_DIR} not found and no --repo provided"
     fi
 else
-    info "Checking local project directory..."
     if [ -d "$PROJECT_DIR" ]; then
         ok "Project exists at ${PROJECT_DIR}"
+    elif [ -n "$REPO_URL" ]; then
+        info "Cloning repo..."
+        git clone "$REPO_URL" "$PROJECT_DIR"
+        ok "Cloned to ${PROJECT_DIR}"
     else
-        fail "Project not found at ${PROJECT_DIR}. Clone it first: git clone ${REPO_URL} ${PROJECT_DIR}"
+        fail "Directory ${PROJECT_DIR} not found. Use --repo to clone or --dir to point to it."
     fi
 fi
 
@@ -169,9 +204,12 @@ fi
 # 4. Local dev extras
 # ---------------------------------------------------------------------------
 if [ "$TARGET" = "local" ]; then
+    INFRA_DIR="$SCRIPT_DIR"
+
     # mkcert certificate
     info "Checking TLS certificate for ${DOMAIN}..."
-    CERT_DIR="${LOCAL_INFRA_DIR}/certs"
+    CERT_DIR="${INFRA_DIR}/certs"
+    mkdir -p "$CERT_DIR"
     if [ -f "${CERT_DIR}/${NAME}.pem" ]; then
         ok "Certificate exists"
     else
@@ -184,7 +222,7 @@ if [ "$TARGET" = "local" ]; then
     fi
 
     # Add certificate to Traefik TLS config
-    TLS_FILE="${LOCAL_INFRA_DIR}/dynamic/tls.yml"
+    TLS_FILE="${INFRA_DIR}/dynamic/tls.yml"
     if [ -f "$TLS_FILE" ] && ! grep -q "${NAME}.pem" "$TLS_FILE"; then
         info "Adding certificate to Traefik TLS config..."
         cat >> "$TLS_FILE" <<TLSEOF
@@ -193,10 +231,25 @@ if [ "$TARGET" = "local" ]; then
       keyFile: /etc/traefik/certs/${NAME}-key.pem
 TLSEOF
         ok "Certificate added to tls.yml"
+    elif [ ! -f "$TLS_FILE" ]; then
+        info "Creating Traefik TLS config..."
+        cat > "$TLS_FILE" <<TLSEOF
+tls:
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /etc/traefik/certs/${NAME}.pem
+        keyFile: /etc/traefik/certs/${NAME}-key.pem
+
+  certificates:
+    - certFile: /etc/traefik/certs/${NAME}.pem
+      keyFile: /etc/traefik/certs/${NAME}-key.pem
+TLSEOF
+        ok "TLS config created"
     fi
 
     # Traefik routing config
-    ROUTING_FILE="${LOCAL_INFRA_DIR}/dynamic/${NAME}.yml"
+    ROUTING_FILE="${INFRA_DIR}/dynamic/routing-${NAME}.yml"
     if [ -f "$ROUTING_FILE" ]; then
         ok "Traefik routing already configured"
     else
