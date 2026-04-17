@@ -169,12 +169,22 @@ Host github.com-acme
 
 #### 2. Project compose files
 
-Each project has two compose files:
+Each project has at minimum two compose files:
 
 - **`docker-compose.yml`** — local dev (volume mounts, hot reload, no Traefik labels)
-- **`docker-compose.prod.yml`** — any server (production builds, Traefik labels, healthchecks)
+- **`docker-compose.prod.yml`** — generic prod (production builds, Traefik labels, healthchecks)
 
-Differences between servers live in `.env` only (`DOMAIN`, `DATABASE_URL`).
+For most projects, runtime differences between servers live in `.env` only (`DOMAIN`, `DATABASE_URL`).
+
+**Host-specific compose files (when `.env` isn't enough):** `docker-compose.<target>.yml`. Use this when a project's prod **routing** itself differs by target — e.g. subdomain `Host()` + HTTPS on DO vs path-based `PathPrefix` + plain HTTP on aws01. Traefik labels can't sanely be parametrized end-to-end through env vars, so two files is the cleanest split.
+
+Recognized target keys (matched by `deploy.sh`):
+- `aws01` for `--target aws`
+- the droplet name (e.g. `isidora`) for `--target do:isidora`
+
+`deploy.sh` resolution order: `docker-compose.<target_key>.yml` → `docker-compose.prod.yml` → `docker-compose.yml`. So a project can add a host-specific overlay without breaking other targets.
+
+**Example:** Marie ships `docker-compose.prod.yml` (DO: subdomain HTTPS via Cloudflare) and `docker-compose.aws01.yml` (aws01: path-based HTTP under `/marie`).
 
 #### 3. `.env.example`
 

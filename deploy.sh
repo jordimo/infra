@@ -59,15 +59,15 @@ done
 case "$TARGET" in
     do:*)
         REMOTE="${TARGET#do:}"
+        TARGET_KEY="${REMOTE}"
         INFRA_DIR="/home/deploy/infra"
         APP_DIR="/home/deploy"
-        COMPOSE_FILE="docker-compose.prod.yml"
         ;;
     aws)
         REMOTE="aws01"
+        TARGET_KEY="aws01"
         INFRA_DIR="/app/infra"
         APP_DIR="/app"
-        COMPOSE_FILE="docker-compose.prod.yml"
         ;;
     *)
         echo -e "${RED}Error: Unknown target '${TARGET}'. Use do:<droplet> or aws.${NC}"
@@ -101,24 +101,37 @@ deploy_project() {
         return 1
     fi
 
-    # Check compose file exists
-    if ! ssh_cmd "test -f ${project_dir}/${COMPOSE_FILE}"; then
-        # Try docker-compose.yml as fallback
-        if ssh_cmd "test -f ${project_dir}/docker-compose.yml"; then
-            COMPOSE_FILE="docker-compose.yml"
-        else
-            echo -e "${RED}[${name}] No compose file found at ${project_dir}/${COMPOSE_FILE}${NC}"
-            echo ""
-            echo "  The project needs a ${COMPOSE_FILE}. See the README for the template."
-            echo ""
-            return 1
+    # Pick the compose file. Order of preference:
+    #   1. docker-compose.<target_key>.yml — host-specific (e.g. aws01,
+    #      isidora). Use this when a project's prod routing differs by
+    #      target (e.g. Marie on aws01 needs path-based + HTTP, on DO
+    #      needs subdomain + HTTPS — labels can't sanely be parametrized
+    #      in a single file).
+    #   2. docker-compose.prod.yml — generic prod compose, works for any
+    #      server. The default for projects whose prod config is uniform.
+    #   3. docker-compose.yml — fallback for projects that haven't split
+    #      out a prod-specific file yet.
+    local COMPOSE_FILE=""
+    for candidate in "docker-compose.${TARGET_KEY}.yml" "docker-compose.prod.yml" "docker-compose.yml"; do
+        if ssh_cmd "test -f ${project_dir}/${candidate}"; then
+            COMPOSE_FILE="$candidate"
+            break
         fi
+    done
+
+    if [ -z "$COMPOSE_FILE" ]; then
+        echo -e "${RED}[${name}] No compose file found in ${project_dir}${NC}"
+        echo ""
+        echo "  Looked for: docker-compose.${TARGET_KEY}.yml, docker-compose.prod.yml, docker-compose.yml"
+        echo "  Add one. See the README for templates."
+        echo ""
+        return 1
     fi
 
     echo -e "${CYAN}[${name}] Pulling latest...${NC}"
     ssh_cmd "cd ${project_dir} && git pull"
 
-    echo -e "${CYAN}[${name}] Rebuilding containers...${NC}"
+    echo -e "${CYAN}[${name}] Rebuilding containers (${COMPOSE_FILE})...${NC}"
     ssh_cmd "cd ${project_dir} && docker compose -f ${COMPOSE_FILE} up -d --build"
 
     echo -e "${GREEN}[${name}] Done${NC}"
