@@ -191,6 +191,38 @@ services:
         max-file: "3"
 
   # ---------------------------------------------------------------------------
+  # Vaultwarden - Password Manager (self-hosted Bitwarden-compatible)
+  # ---------------------------------------------------------------------------
+  # Data lives in the ${VAULTWARDEN_VOLUME} volume — set explicitly when
+  # migrating an existing install so history is preserved.
+  vaultwarden:
+    image: vaultwarden/server:latest
+    container_name: vaultwarden
+    restart: unless-stopped
+    profiles: [vaultwarden]
+    environment:
+      DOMAIN: "${VAULTWARDEN_DOMAIN:-https://vault.local}"
+      SIGNUPS_ALLOWED: "${VAULTWARDEN_SIGNUPS:-false}"
+      ADMIN_TOKEN: "${VAULTWARDEN_ADMIN_TOKEN:-}"
+    volumes:
+      - vaultwarden_data:/data
+    networks:
+      - infra
+    labels:
+      - "traefik.enable=${VAULTWARDEN_TRAEFIK:-false}"
+      - "traefik.docker.network=infra"
+      - "traefik.http.routers.vaultwarden.rule=Host(`${VAULTWARDEN_HOST:-vault.local}`)"
+      - "traefik.http.routers.vaultwarden.entrypoints=websecure"
+      - "traefik.http.routers.vaultwarden.tls=${VAULTWARDEN_TLS:-true}"
+      - "traefik.http.routers.vaultwarden.tls.certresolver=${VAULTWARDEN_CERTRESOLVER:-}"
+      - "traefik.http.services.vaultwarden.loadbalancer.server.port=80"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---------------------------------------------------------------------------
   # Mailpit - Email Catcher (local dev only)
   # ---------------------------------------------------------------------------
   mailpit:
@@ -222,3 +254,5 @@ volumes:
     name: ${REDIS_VOLUME:-redis_data}
   traefik_letsencrypt:
     name: ${TRAEFIK_VOLUME:-traefik_letsencrypt}
+  vaultwarden_data:
+    name: ${VAULTWARDEN_VOLUME:-vaultwarden_data}
