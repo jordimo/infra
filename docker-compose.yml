@@ -149,6 +149,7 @@ services:
       # --- Redis (ingestion queue + cache) — shared redis service, no auth ---
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - REDIS_AUTH=${REDIS_AUTH:-}
       # --- S3 / MinIO (event + media uploads) ---
       - LANGFUSE_S3_EVENT_UPLOAD_BUCKET=langfuse
       - LANGFUSE_S3_EVENT_UPLOAD_REGION=auto
@@ -216,6 +217,7 @@ services:
       - CLICKHOUSE_CLUSTER_ENABLED=false
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - REDIS_AUTH=${REDIS_AUTH:-}
       - LANGFUSE_S3_EVENT_UPLOAD_BUCKET=langfuse
       - LANGFUSE_S3_EVENT_UPLOAD_REGION=auto
       - LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minio}
