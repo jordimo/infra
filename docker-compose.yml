@@ -173,7 +173,7 @@ services:
       - LANGFUSE_INIT_USER_PASSWORD
     ports:
       - "${LANGFUSE_BIND:-0.0.0.0}:3030:3000"
-    mem_limit: 768m
+    mem_limit: 1536m
     depends_on:
       postgres:
         condition: service_healthy
