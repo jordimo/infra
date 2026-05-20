@@ -17,7 +17,7 @@ services:
   # Traefik - Reverse Proxy
   # ---------------------------------------------------------------------------
   traefik:
-    image: traefik:v3.6@sha256:5ae9c349154d5298a5d61a7b25e5f3a9f53314f1515e87632120b95051c7917c
+    image: traefik:v3.6.14@sha256:4cda3393930dceff030e144b46260e96e1337c9cfaa4fed81c90cb8f4d498f57
     container_name: traefik
     restart: always
     command:
