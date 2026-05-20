@@ -68,7 +68,7 @@ services:
   # PostgreSQL - Shared Database
   # ---------------------------------------------------------------------------
   postgres:
-    image: pgvector/pgvector:pg16@sha256:7d400e340efb42f4d8c9c12c6427adb253f726881a9985d2a471bf0eed824dff
+    image: pgvector/pgvector:pg16@sha256:00ba258a66dac104fd5171074a0084462a64a1369d8513f3d0a634e2f24d15bc
     container_name: postgres
     restart: always
     environment:
@@ -95,7 +95,7 @@ services:
   # Redis - Shared Cache
   # ---------------------------------------------------------------------------
   redis:
-    image: redis:7-alpine@sha256:8b81dd37ff027bec4e516d41acfbe9fe2460070dc6d4a4570a2ac5b9d59df065
+    image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
     container_name: redis
     restart: always
     command: redis-server ${REDIS_ARGS:---save 60 1}
@@ -128,7 +128,7 @@ services:
   # v2 schema. After the backfill completes, bump to `:3` (latest).
   # ---------------------------------------------------------------------------
   umami:
-    image: docker.umami.is/umami-software/umami:postgresql-latest@sha256:28f263fe06f79ebffa5a6a6e9bd33b7a278e9342a88e0bdac812416c9f9e4361
+    image: docker.umami.is/umami-software/umami:postgresql-latest@sha256:e3f80c0625aad7179b49da27d475357cabb1068b8cacd9a792cfd6966888b123
     container_name: umami
     restart: always
     environment:
