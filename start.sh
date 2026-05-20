@@ -19,14 +19,14 @@ if grep -q '^COMPOSE_PROFILES=.*local' .env 2>/dev/null; then
 fi
 
 # ---------------------------------------------------------------------------
-# Local dev: ensure .local domains for infra services
+# Local dev: ensure .localhost domains for infra services
 # ---------------------------------------------------------------------------
 if grep -q '^COMPOSE_PROFILES=.*local' .env 2>/dev/null; then
-    # Infra services that need .local domains
+    # Infra services that need .localhost domains
     # Format: name:domain (cert files use the name, not the domain)
     INFRA_DOMAINS=(
-        "langfuse:langfuse.local"
-        "analytics:analytics.local"
+        "langfuse:langfuse.localhost"
+        "analytics:analytics.localhost"
     )
 
     for entry in "${INFRA_DOMAINS[@]}"; do
@@ -60,8 +60,8 @@ echo "  Traefik dashboard: http://localhost:8080"
 echo "  PostgreSQL:        localhost:5432"
 echo "  Redis:             localhost:6379"
 if grep -q '^COMPOSE_PROFILES=.*local' .env 2>/dev/null; then
-    echo "  Langfuse:          https://langfuse.local   (admin@local.dev / adminadmin)"
-    echo "  Umami:             https://analytics.local  (admin / umami)"
+    echo "  Langfuse:          https://langfuse.localhost   (admin@local.dev / adminadmin)"
+    echo "  Umami:             https://analytics.localhost  (admin / umami)"
     echo "  Mailpit:           http://localhost:8025"
 else
     echo "  Langfuse:          http://localhost:3030"

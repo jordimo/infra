@@ -102,7 +102,7 @@ case "$TARGET" in
     local)
         REMOTE=""
         COMPOSE_FILE="docker-compose.yml"
-        DOMAIN="${NAME}.local"
+        DOMAIN="${NAME}.localhost"
         if [ -z "$PROJECT_DIR" ]; then
             fail "Local target requires --dir <path> (e.g. --dir ~/Dev/Acme)"
         fi
@@ -373,7 +373,7 @@ echo ""
 echo "  Next steps:"
 case "$TARGET" in
     local)
-        echo "    - Set up Langfuse: open https://langfuse.local"
+        echo "    - Set up Langfuse: open https://langfuse.localhost"
         ;;
     *)
         echo "    - Set up Langfuse: ssh -L 3030:localhost:3030 ${REMOTE}"
