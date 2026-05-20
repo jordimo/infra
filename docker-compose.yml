@@ -2,7 +2,7 @@
 # Shared Infrastructure — All Environments
 # =============================================================================
 # One compose for local dev, DigitalOcean, and AWS.
-# Differences live in .env — see .env.example.local and .env.example.do.
+# Differences live in .env — see .env.example.localhost and .env.example.do.
 #
 # Usage:
 #   docker compose up -d                        # Start (reads .env)
@@ -144,7 +144,7 @@ services:
       - infra
     labels:
       - "traefik.enable=${UMAMI_TRAEFIK:-false}"
-      - "traefik.http.routers.umami.rule=Host(`${UMAMI_DOMAIN:-analytics.local}`)"
+      - "traefik.http.routers.umami.rule=Host(`${UMAMI_DOMAIN:-analytics.localhost}`)"
       - "traefik.http.routers.umami.entrypoints=websecure"
       - "traefik.http.routers.umami.tls=${UMAMI_TLS:-true}"
       - "traefik.http.routers.umami.tls.certresolver=${UMAMI_CERTRESOLVER:-}"
@@ -166,7 +166,7 @@ services:
     restart: always
     profiles: [vaultwarden]
     environment:
-      DOMAIN: "${VAULTWARDEN_DOMAIN:-https://vault.local}"
+      DOMAIN: "${VAULTWARDEN_DOMAIN:-https://vault.localhost}"
       SIGNUPS_ALLOWED: "${VAULTWARDEN_SIGNUPS:-false}"
       ADMIN_TOKEN: "${VAULTWARDEN_ADMIN_TOKEN:-}"
     volumes:
@@ -176,7 +176,7 @@ services:
     labels:
       - "traefik.enable=${VAULTWARDEN_TRAEFIK:-false}"
       - "traefik.docker.network=infra"
-      - "traefik.http.routers.vaultwarden.rule=Host(`${VAULTWARDEN_HOST:-vault.local}`)"
+      - "traefik.http.routers.vaultwarden.rule=Host(`${VAULTWARDEN_HOST:-vault.localhost}`)"
       - "traefik.http.routers.vaultwarden.entrypoints=websecure"
       - "traefik.http.routers.vaultwarden.tls=${VAULTWARDEN_TLS:-true}"
       - "traefik.http.routers.vaultwarden.tls.certresolver=${VAULTWARDEN_CERTRESOLVER:-}"
@@ -202,7 +202,7 @@ services:
       - infra
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.mailpit.rule=Host(`mail.local`)"
+      - "traefik.http.routers.mailpit.rule=Host(`mail.localhost`)"
       - "traefik.http.routers.mailpit.entrypoints=websecure"
       - "traefik.http.routers.mailpit.tls=true"
       - "traefik.http.services.mailpit.loadbalancer.server.port=8025"
