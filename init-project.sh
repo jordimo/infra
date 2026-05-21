@@ -58,7 +58,7 @@ usage() {
     echo ""
     echo "Targets:"
     echo "  local            Local dev"
-    echo "  do:<droplet>     DigitalOcean (e.g. do:zora)"
+    echo "  do:<ssh-alias>   Remote server, e.g. do:zora (Hetzner). 'do:' is a legacy prefix; the part after is your SSH alias."
     echo "  aws              AWS (aws01)"
     echo ""
     echo "Options:"

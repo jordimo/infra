@@ -352,10 +352,13 @@ Targets configured via SSH aliases — deploy script doesn't know about IPs or k
 
 ```
 # ~/.ssh/config (corporate laptop)
-Host do
-    HostName 174.138.33.106
+# Host alias kept as `do` for the deploy.sh `do:zora` legacy prefix, but
+# this is now the Hetzner zora box — the original DigitalOcean isidora
+# droplet was migrated 2026-05-02.
+Host zora
+    HostName 178.156.133.68
     User deploy
-    IdentityFile ~/.ssh/do_isidora
+    IdentityFile ~/.ssh/id_ed25519
 
 Host aws
     HostName 10.251.8.172
