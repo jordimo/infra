@@ -128,11 +128,28 @@ deploy_project() {
         return 1
     fi
 
+    # Assemble the `-f` args. A docker-compose override file is included when
+    # present so its overlay (e.g. build: contexts that the primary prod
+    # compose omits) is merged in. Docker only auto-loads
+    # docker-compose.override.yml when invoked without `-f`; since we always
+    # pass `-f`, the override must be listed explicitly or `--build` below
+    # silently rebuilds nothing. Host-specific override wins if both exist.
+    local COMPOSE_FILES="-f ${COMPOSE_FILE}"
+    for override in "docker-compose.${TARGET_KEY}.override.yml" "docker-compose.override.yml"; do
+        # Skip if it's the primary file we already selected.
+        [ "$override" = "$COMPOSE_FILE" ] && continue
+        if ssh_cmd "test -f ${project_dir}/${override}"; then
+            COMPOSE_FILES="${COMPOSE_FILES} -f ${override}"
+            echo -e "${CYAN}[${name}] Including override ${override}${NC}"
+            break
+        fi
+    done
+
     echo -e "${CYAN}[${name}] Pulling latest...${NC}"
     ssh_cmd "cd ${project_dir} && git pull"
 
-    echo -e "${CYAN}[${name}] Rebuilding containers (${COMPOSE_FILE})...${NC}"
-    ssh_cmd "cd ${project_dir} && docker compose -f ${COMPOSE_FILE} up -d --build"
+    echo -e "${CYAN}[${name}] Rebuilding containers (${COMPOSE_FILES})...${NC}"
+    ssh_cmd "cd ${project_dir} && docker compose ${COMPOSE_FILES} up -d --build"
 
     echo -e "${GREEN}[${name}] Done${NC}"
 }
