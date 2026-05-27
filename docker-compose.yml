@@ -211,6 +211,9 @@ services:
     image: neo4j:5-community
     container_name: neo4j
     restart: always
+    ports:
+      - "${NEO4J_BIND:-127.0.0.1}:7687:7687"
+      - "${NEO4J_BIND:-127.0.0.1}:7474:7474"
     environment:
       NEO4J_AUTH: ${NEO4J_AUTH:-neo4j/neo4j-local-dev-password}
       NEO4J_PLUGINS: '["apoc"]'
