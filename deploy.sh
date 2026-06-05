@@ -78,8 +78,11 @@ esac
 ssh_cmd() { ssh "$REMOTE" "$@"; }
 
 deploy_infra() {
-    echo -e "${CYAN}[infra] Pulling latest...${NC}"
-    ssh_cmd "cd ${INFRA_DIR} && git pull"
+    echo -e "${CYAN}[infra] Syncing to origin/main...${NC}"
+    # Self-heal: force the deploy mirror to origin/main regardless of current state
+    # (detached HEAD, wrong branch, or local drift). A bare `git pull` fails on a
+    # detached/stranded checkout — which is exactly how prod gets wedged.
+    ssh_cmd "cd ${INFRA_DIR} && git fetch origin --prune -q && git checkout -f -B main origin/main"
 
     echo -e "${CYAN}[infra] Restarting services...${NC}"
     ssh_cmd "cd ${INFRA_DIR} && docker compose up -d"
@@ -145,8 +148,11 @@ deploy_project() {
         fi
     done
 
-    echo -e "${CYAN}[${name}] Pulling latest...${NC}"
-    ssh_cmd "cd ${project_dir} && git pull"
+    echo -e "${CYAN}[${name}] Syncing to origin/main...${NC}"
+    # Self-heal: force this deploy mirror to origin/main regardless of current state
+    # (detached HEAD, wrong branch, local drift). A bare `git pull` fails on a
+    # detached/stranded checkout — both zora consumer dirs were wedged this way.
+    ssh_cmd "cd ${project_dir} && git fetch origin --prune -q && git checkout -f -B main origin/main"
 
     echo -e "${CYAN}[${name}] Rebuilding containers (${COMPOSE_FILES})...${NC}"
     ssh_cmd "cd ${project_dir} && docker compose ${COMPOSE_FILES} up -d --build"
