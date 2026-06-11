@@ -1,0 +1,36 @@
+http:
+  routers:
+    lostriver-api:
+      rule: "PathPrefix(`/lostriver/api`)"
+      entryPoints:
+        - web
+      middlewares:
+        - lostriver-strip-prefix
+      service: lostriver-api
+      priority: 200
+
+    lostriver-web:
+      rule: "PathPrefix(`/lostriver`)"
+      entryPoints:
+        - web
+      middlewares:
+        - lostriver-strip-prefix
+      service: lostriver-web
+      priority: 100
+
+  middlewares:
+    lostriver-strip-prefix:
+      stripPrefix:
+        prefixes:
+          - "/lostriver"
+
+  services:
+    lostriver-api:
+      loadBalancer:
+        servers:
+          - url: "http://lostriver-api:3000"
+
+    lostriver-web:
+      loadBalancer:
+        servers:
+          - url: "http://lostriver-web:80"

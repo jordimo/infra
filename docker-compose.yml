@@ -28,6 +28,9 @@ services:
       # Trust XFF/CF-Connecting-IP from Cloudflare (origin is behind CF proxy)
       - --entrypoints.websecure.forwardedHeaders.trustedIPs=${TRUSTED_PROXY_IPS:-127.0.0.1/32}
       - --entrypoints.web.forwardedHeaders.trustedIPs=${TRUSTED_PROXY_IPS:-127.0.0.1/32}
+      # Redirect all plain HTTP to HTTPS (ACME http-01 challenge path is exempted by Traefik)
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
       - --providers.docker.network=infra
@@ -202,7 +205,7 @@ services:
       - infra
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.mailpit.rule=Host(`mail.localhost`)"
+      - "traefik.http.routers.mailpit.rule=Host(`mailpit.localhost`) || Host(`mail.localhost`)"
       - "traefik.http.routers.mailpit.entrypoints=websecure"
       - "traefik.http.routers.mailpit.tls=true"
       - "traefik.http.services.mailpit.loadbalancer.server.port=8025"

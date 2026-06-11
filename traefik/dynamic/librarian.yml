@@ -1,0 +1,36 @@
+http:
+  routers:
+    librarian-api:
+      rule: "PathPrefix(`/librarian/api`)"
+      entryPoints:
+        - web
+      middlewares:
+        - librarian-strip-prefix
+      service: librarian-api
+      priority: 200
+
+    librarian-web:
+      rule: "PathPrefix(`/librarian`)"
+      entryPoints:
+        - web
+      middlewares:
+        - librarian-strip-prefix
+      service: librarian-web
+      priority: 100
+
+  middlewares:
+    librarian-strip-prefix:
+      stripPrefix:
+        prefixes:
+          - "/librarian"
+
+  services:
+    librarian-api:
+      loadBalancer:
+        servers:
+          - url: "http://librarian-api:3000"
+
+    librarian-web:
+      loadBalancer:
+        servers:
+          - url: "http://librarian-web:3001"

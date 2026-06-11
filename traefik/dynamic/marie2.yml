@@ -1,0 +1,36 @@
+http:
+  routers:
+    marie2-api:
+      rule: "PathPrefix(`/marie2/api`)"
+      entryPoints:
+        - web
+      middlewares:
+        - marie2-strip-prefix
+      service: marie2-api
+      priority: 200
+
+    marie2-web:
+      rule: "PathPrefix(`/marie2`)"
+      entryPoints:
+        - web
+      middlewares:
+        - marie2-strip-prefix
+      service: marie2-web
+      priority: 100
+
+  middlewares:
+    marie2-strip-prefix:
+      stripPrefix:
+        prefixes:
+          - "/marie2"
+
+  services:
+    marie2-api:
+      loadBalancer:
+        servers:
+          - url: "http://marie2-api:3000"
+
+    marie2-web:
+      loadBalancer:
+        servers:
+          - url: "http://marie2-web:3001"

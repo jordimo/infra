@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Publish current branch (or arg) to The-Collective-OMC.
+# Uses the enterprise gh token via a one-shot git credential helper.
+# Does NOT switch your active gh account.
+set -euo pipefail
+ENT_USER=jordi-martinezortega_omcitcld
+BRANCH="${1:-$(git rev-parse --abbrev-ref HEAD)}"
+TOKEN=$(gh auth token -u "${ENT_USER}")
+if [ -z "${TOKEN}" ]; then
+  echo "error: no gh token for ${ENT_USER}. run: gh auth login --hostname github.com" >&2
+  exit 1
+fi
+export GIT_PUBLISH_TOKEN="${TOKEN}"
+echo "Pushing ${BRANCH} to publish (The-Collective-OMC) as ${ENT_USER}..."
+git \
+  -c credential.helper= \
+  -c "credential.helper=!f() { echo username=x-access-token; echo password=\$GIT_PUBLISH_TOKEN; }; f" \
+  push publish "${BRANCH}"
