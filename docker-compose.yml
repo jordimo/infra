@@ -261,6 +261,69 @@ services:
       timeout: 5s
       retries: 12
 
+  # ---------------------------------------------------------------------------
+  # Tika + Docling - Shared document text-extraction services
+  # ---------------------------------------------------------------------------
+  # Platform-shared, stateless extractors. Owned here (not by any app) so any
+  # project — Librarian (in-Docker, via service name) and host-run apps like
+  # Caitie (via the published host port) — can reach them. Versions are pinned
+  # by digest so consumers stay stable.
+  #
+  # Reach them:
+  #   - In-Docker (same `infra` network):  http://tika:9998   /  http://docling:5001
+  #   - Host-run apps:                      http://localhost:9998 / http://localhost:5001
+  #
+  # `profiles: [local]` keeps these on the local-dev stack only. Prod infra
+  # (`deploy.sh` runs a bare `docker compose up -d`, no profile) does NOT start
+  # them — Librarian's own docker-compose.zora.yml ships its own extractors
+  # there, so this avoids duplicate Java/OCR containers OOMing a small droplet.
+  tika:
+    image: apache/tika:latest-full@sha256:d8e6ed96260ad89307a93195a1b856102987a818ac648502f8efbaf313d32470
+    container_name: tika
+    restart: unless-stopped
+    profiles: [local]
+    ports:
+      - "9998:9998"
+    networks:
+      - infra
+    labels: ["traefik.enable=false"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9998/tika"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  docling:
+    image: quay.io/docling-project/docling-serve:latest@sha256:bdf706b8ac87e5f5a13b5dec1cbc42b214cf2ece4e9281098524189cdb08af51
+    container_name: docling
+    restart: unless-stopped
+    profiles: [local]
+    environment:
+      DOCLING_SERVE_ENABLE_UI: "false"
+    ports:
+      - "5001:5001"
+      # docling-serve also EXPOSEs 8080; host 8080 is taken by Traefik's
+      # dashboard, so publish it on 8082 instead. (The API + health live on 5001.)
+      - "8082:8080"
+    networks:
+      - infra
+    labels: ["traefik.enable=false"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:5001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 networks:
   infra:
     name: infra
