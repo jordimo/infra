@@ -243,6 +243,10 @@ services:
     image: neo4j:5-community
     container_name: neo4j-test
     restart: unless-stopped
+    # Test-only: TheBrain's integration suite points NEO4J_URI here. Gated to
+    # the `local` profile (COMPOSE_PROFILES=local on dev, empty on prod) so the
+    # bare `docker compose up -d` that deploy.sh runs on prod does NOT start it.
+    profiles: [local]
     ports:
       - "${NEO4J_BIND:-127.0.0.1}:7688:7687"
     environment:
