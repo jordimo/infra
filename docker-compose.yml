@@ -273,15 +273,16 @@ services:
   #   - In-Docker (same `infra` network):  http://tika:9998   /  http://docling:5001
   #   - Host-run apps:                      http://localhost:9998 / http://localhost:5001
   #
-  # `profiles: [local]` keeps these on the local-dev stack only. Prod infra
-  # (`deploy.sh` runs a bare `docker compose up -d`, no profile) does NOT start
-  # them — Librarian's own docker-compose.zora.yml ships its own extractors
-  # there, so this avoids duplicate Java/OCR containers OOMing a small droplet.
+  # Shared on BOTH local and prod (no profile): apps reach them by service
+  # name instead of each shipping its own Java/OCR containers. The prod host
+  # has ample RAM (15Gi), so one shared set is the lighter footprint; consuming
+  # apps (e.g. Librarian) drop their own extractors and point DOCLING_URL/
+  # TIKA_URL at these. `deploy.sh` on prod runs a bare `docker compose up -d`
+  # (no profile), so leaving these profile-less is what starts them there.
   tika:
     image: apache/tika:latest-full@sha256:d8e6ed96260ad89307a93195a1b856102987a818ac648502f8efbaf313d32470
     container_name: tika
     restart: unless-stopped
-    profiles: [local]
     ports:
       - "9998:9998"
     networks:
@@ -302,7 +303,6 @@ services:
     image: quay.io/docling-project/docling-serve:latest@sha256:bdf706b8ac87e5f5a13b5dec1cbc42b214cf2ece4e9281098524189cdb08af51
     container_name: docling
     restart: unless-stopped
-    profiles: [local]
     environment:
       DOCLING_SERVE_ENABLE_UI: "false"
     ports:
