@@ -25,6 +25,41 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+# Bitwarden item holding the GitHub Packages read token (read:packages PAT),
+# used as NODE_AUTH_TOKEN at build time by projects that pull @jordimo/*
+# (Marie, Librarian, TheBrain web). Vault: LOSTRIVER/Zora/_shared.
+GH_PACKAGES_TOKEN_ITEM="0436e1bc-b325-4caa-b87f-1b0775894063"
+
+# Resolve NODE_AUTH_TOKEN for GitHub Packages builds. Precedence:
+#   1. existing $NODE_AUTH_TOKEN (operator override) — always wins.
+#   2. Bitwarden, if the `bw` CLI is unlocked (BW_SESSION exported).
+# Best-effort + non-fatal: a deploy that doesn't pull @jordimo (infra, or a
+# project that builds the SDK locally) proceeds regardless; only a build that
+# actually needs the token fails — with a clear npm 401 — if it can't be resolved.
+# The repos' .npmrc uses ${NODE_AUTH_TOKEN}; the Dockerfile injects it as a
+# BuildKit secret during `npm ci` (never baked into an image layer).
+resolve_node_auth_token() {
+    [ -n "${NODE_AUTH_TOKEN:-}" ] && { echo -e "${CYAN}NODE_AUTH_TOKEN: using value from environment.${NC}"; return 0; }
+    if ! command -v bw >/dev/null 2>&1; then
+        echo -e "${YELLOW}NODE_AUTH_TOKEN unset and 'bw' CLI not found — export it manually if this build pulls @jordimo packages.${NC}"
+        return 0
+    fi
+    local bw_status
+    bw_status="$(bw status 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4)"
+    if [ "$bw_status" != "unlocked" ]; then
+        echo -e "${YELLOW}NODE_AUTH_TOKEN unset and Bitwarden is locked — run 'export BW_SESSION=\$(bw unlock --raw)' first, or export NODE_AUTH_TOKEN manually.${NC}"
+        return 0
+    fi
+    local tok
+    tok="$(bw get password "$GH_PACKAGES_TOKEN_ITEM" 2>/dev/null || true)"
+    if [ -n "$tok" ]; then
+        export NODE_AUTH_TOKEN="$tok"
+        echo -e "${CYAN}NODE_AUTH_TOKEN: loaded from Bitwarden.${NC}"
+    else
+        echo -e "${YELLOW}Couldn't read NODE_AUTH_TOKEN from Bitwarden (item ${GH_PACKAGES_TOKEN_ITEM}). Export it manually if needed.${NC}"
+    fi
+}
+
 usage() {
     echo "Usage: ./deploy.sh --target <target> <project|infra|--all>"
     echo ""
@@ -154,8 +189,16 @@ deploy_project() {
     # detached/stranded checkout — both zora consumer dirs were wedged this way.
     ssh_cmd "cd ${project_dir} && git fetch origin --prune -q && git checkout -f -B main origin/main"
 
+    # Resolve the GitHub Packages build token (no-op if already set / not needed).
+    resolve_node_auth_token
+    # Inject NODE_AUTH_TOKEN into the REMOTE build env only when we have one — the
+    # build runs on the host, and projects pulling @jordimo/* need it for npm ci.
+    # Omitted when empty so non-package builds don't get a spurious export.
+    local remote_env=""
+    [ -n "${NODE_AUTH_TOKEN:-}" ] && remote_env="export NODE_AUTH_TOKEN='${NODE_AUTH_TOKEN}' && "
+
     echo -e "${CYAN}[${name}] Rebuilding containers (${COMPOSE_FILES})...${NC}"
-    ssh_cmd "cd ${project_dir} && docker compose ${COMPOSE_FILES} up -d --build"
+    ssh_cmd "cd ${project_dir} && ${remote_env}docker compose ${COMPOSE_FILES} up -d --build"
 
     echo -e "${GREEN}[${name}] Done${NC}"
 }
