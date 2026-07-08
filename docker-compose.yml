@@ -134,6 +134,10 @@ services:
     image: docker.umami.is/umami-software/umami:postgresql-latest@sha256:e3f80c0625aad7179b49da27d475357cabb1068b8cacd9a792cfd6966888b123
     container_name: umami
     restart: always
+    # Disabled by default — needs an `umami` database in postgres before it
+    # will boot (else it crash-loops on `database "umami" does not exist`).
+    # Start explicitly with: docker compose --profile umami up -d
+    profiles: [umami]
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/umami
       - APP_SECRET=${UMAMI_SECRET:-local-umami-secret-dev-only}
