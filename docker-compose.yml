@@ -120,16 +120,397 @@ services:
         max-file: "3"
 
   # ---------------------------------------------------------------------------
-  # Langfuse v3 - LLM Observability
+  # Phoenix - LLM Observability (THE standard across all hosts)
   # ---------------------------------------------------------------------------
-  # v3 splits the v2 single-container design into web + worker, and adds
-  # ClickHouse (trace storage), MinIO (event/media blobs). Redis is reused
-  # from the shared service above (no auth — LANGFUSE_REDIS_* points at it).
+  # One container against the shared postgres. No ClickHouse, no object store,
+  # no queue. This is the deliberate common denominator: the same stack runs on
+  # local, zora, and aws01, so there is one thing to learn, one thing to debug,
+  # and no host where it "doesn't quite fit".
   #
-  # Upgrading v2 → v3: use image tag `3.29.0` for the first boot so the
-  # Postgres → ClickHouse backfill runs on a version that still knows the
-  # v2 schema. After the backfill completes, bump to `:3` (latest).
+  # Chosen over Langfuse v4 on measured footprint (2026-08-06, same machine,
+  # same OTLP payloads):
+  #   Langfuse v4 (tuned)   1848 MiB, 4 containers, +ClickHouse +MinIO +Redis
+  #   Phoenix                ~400 MiB, 1 container,  +Postgres (already running)
+  # Phoenix ingested 500 spans under a 1g cap at 411 MiB, no OOM, no restarts.
+  # On aws01 (7.5 GiB shared with ~1.4 GiB of IT agents) that is ~42% of the box
+  # versus ~61%. The Langfuse services below are kept but no longer the default.
+  #
+  # Feature parity is closer than the "lightweight alternative" framing suggests.
+  # Verified against the live schema on 2026-08-06, NOT from docs:
+  #   - Model price catalog: 268 models / 797 token prices, with separate
+  #     input, output, cache_read and cache_write rates. Current enough to know
+  #     claude-opus-5, claude-sonnet-5, gpt-5 and gpt-5.4 — i.e. it covers the
+  #     exact gap that forced the Langfuse v2->v3 migration in April.
+  #   - Prompt management: prompts, prompt_versions, prompt_version_tags,
+  #     prompt_labels. Versioning and labels, same shape as Langfuse's.
+  #   - Datasets, experiments and evaluators are all present too.
+  #
+  # The one real difference: Phoenix is Elastic License 2.0, not MIT. No
+  # practical constraint for internal use, but it is not OSI open source.
+  #
+  # First-boot prerequisite, once per host:
+  #   docker exec postgres createdb -U postgres phoenix
+  # Phoenix creates its own schema, but not the database.
+  #
+  # Start with:  docker compose --profile phoenix up -d
   # ---------------------------------------------------------------------------
+  phoenix:
+    image: arizephoenix/phoenix:19.18.0@sha256:65211b52795a0f8b67e29ec1a0787d4b683acb3c5450d2c30a30e0ad670bd3a8
+    container_name: phoenix
+    restart: always
+    profiles: [phoenix]
+    environment:
+      - PHOENIX_SQL_DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/phoenix
+      # Auth is ON by default here. Phoenix ships it OFF, which leaves the UI
+      # and the whole API open to anything that can reach the container.
+      # /healthz stays unauthenticated so the healthcheck below still works.
+      - PHOENIX_ENABLE_AUTH=${PHOENIX_ENABLE_AUTH:-True}
+      - PHOENIX_SECRET=${PHOENIX_SECRET:-}
+      # Bearer token for instrumentation/API. Must be >=32 chars, contain a
+      # digit and a lowercase letter, and DIFFER from PHOENIX_SECRET.
+      - PHOENIX_ADMIN_SECRET=${PHOENIX_ADMIN_SECRET:-}
+      - PHOENIX_DEFAULT_ADMIN_INITIAL_PASSWORD=${PHOENIX_ADMIN_PASSWORD:-}
+      - PHOENIX_ENABLE_STRONG_PASSWORD_POLICY=${PHOENIX_STRONG_PASSWORDS:-True}
+      # Upstream default is 0 = keep forever. Spans are the fastest-growing
+      # table and nothing else prunes them.
+      - PHOENIX_DEFAULT_RETENTION_POLICY_DAYS=${PHOENIX_RETENTION_DAYS:-90}
+      - PHOENIX_WORKING_DIR=/data
+    ports:
+      # UI + OTLP/HTTP. Loopback by default — on a server reach it with
+      #   ssh -L 6006:localhost:6006 <host>
+      - "${PHOENIX_BIND:-127.0.0.1}:6006:6006"
+      # OTLP/gRPC. Also loopback: in-container senders use http://phoenix:6006
+      # or phoenix:4317 over the infra network and never touch these.
+      - "${PHOENIX_BIND:-127.0.0.1}:4317:4317"
+    volumes:
+      - phoenix_data:/data
+    # Measured 411 MiB resident after 500 spans under this exact cap.
+    mem_limit: ${PHOENIX_MEM:-1g}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - infra
+    labels:
+      - "traefik.enable=${PHOENIX_TRAEFIK:-false}"
+      - "traefik.docker.network=infra"
+      - "traefik.http.routers.phoenix.rule=Host(`${PHOENIX_DOMAIN:-phoenix.localhost}`)"
+      - "traefik.http.routers.phoenix.entrypoints=websecure"
+      - "traefik.http.routers.phoenix.tls=${PHOENIX_TLS:-true}"
+      # No certresolver label — an empty one silently invalidates the router
+      # (bare 404, nothing in the traefik log). See the langfuse notes below.
+      - "traefik.http.services.phoenix.loadbalancer.server.port=6006"
+    healthcheck:
+      # The image is DISTROLESS — no sh, no wget, no curl. A CMD-SHELL probe
+      # fails with "executable not found" and the container never goes healthy,
+      # which also means traefik never publishes a router for it. Only the exec
+      # form works, and python is the one interpreter present.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:6006/healthz', timeout=5).status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---------------------------------------------------------------------------
+  # Langfuse v4 - LLM Observability (SUPERSEDED by phoenix above)
+  # ---------------------------------------------------------------------------
+  # Kept, working and tested, but no longer the default on any host — running a
+  # different observability stack per host was the thing we were trying to stop
+  # doing. Phoenix covers cost tracking and prompt management too (see above),
+  # so there is no longer a standing feature reason to enable this. Kept as a
+  # tested fallback: MIT-licensed, and the mature choice at high trace volume
+  # where Postgres-backed span storage would stop keeping up. Expect ~1.85 GiB
+  # across four containers plus ClickHouse, MinIO and Redis.
+  #
+  # Four services: langfuse-web + langfuse-worker (the app), clickhouse (traces,
+  # observations, scores) and minio (event/media blobs). Postgres (users, orgs,
+  # projects, prompts, API keys) and Redis (queue + cache) are reused from the
+  # shared services above rather than duplicated.
+  #
+  # ALL FOUR are gated behind `profiles: [langfuse]` — this stack is NOT wanted
+  # on every host. Start it explicitly with:
+  #   docker compose --profile langfuse up -d
+  # (Session 15/16, 2026-04-20: an uncapped Langfuse on a 4 GiB host cascaded a
+  # single OOM kill into a full-host livelock. The caps below are not optional.)
+  #
+  # Footprint, measured 2026-08-06, one project, no real traffic. Note these
+  # are cgroup peaks, not a single idle sample — the idle sample understates it:
+  #   web       ~1.0 GiB resident, ~1.6 GiB peak (Next.js boot spike)
+  #   worker    ~0.5 GiB resident, ~0.6 GiB peak
+  #   clickhouse — see below; it fills to whatever cap you give it
+  #   minio     ~0.1 GiB
+  #
+  # IMPORTANT: ClickHouse's mem_limit behaves as a RESERVATION, not a ceiling.
+  # It reads the cgroup limit and sets max_server_memory_usage to 0.9x it, then
+  # fills mark/uncompressed caches until it gets there and stays. Measured: it
+  # sat at 883/896 MiB with a 896m cap and climbed to ~1.03 GiB (heading to its
+  # 1.35 GiB self-limit) with a 1536m cap. Budget for it accordingly — on a
+  # tight host, LOWER this cap rather than expecting ClickHouse to idle low.
+  #
+  # Whole stack: ~2.5 GiB resident / ~2.9 GiB peak with the small caps below;
+  # ~3.0 / ~3.4 GiB at the defaults. Per-host tuning via the LANGFUSE_*_MEM
+  # vars — see .env.example.
+  #
+  # First-boot prerequisite: the `langfuse` database must already exist —
+  # Prisma runs the migrations but will not CREATE DATABASE. Once, per host:
+  #   docker exec postgres createdb -U postgres langfuse
+  # Without it langfuse-web crash-loops on `database "langfuse" does not exist`.
+  #
+  # v4 requires ClickHouse >= 25.12, Postgres >= 15, Redis >= 7.0 — all met by
+  # the pins here and by the shared postgres/redis above. v4's default ingestion
+  # write mode (`events_only`) REJECTS Python SDK <=v2 and JS/TS SDK <=v3, so
+  # bump the SDK in any project before pointing it at this.
+  # ---------------------------------------------------------------------------
+  langfuse-web:
+    image: langfuse/langfuse:${LANGFUSE_IMAGE_TAG:-4}
+    container_name: langfuse-web
+    restart: always
+    profiles: [langfuse]
+    environment:
+      # --- Postgres (transactional: users, orgs, projects, prompts, API keys) ---
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/langfuse
+      # --- Auth / crypto ---
+      - NEXTAUTH_SECRET=${LANGFUSE_SECRET:-local-langfuse-secret-dev-only}
+      - NEXTAUTH_URL=${LANGFUSE_URL:-https://langfuse.localhost}
+      - SALT=${LANGFUSE_SALT:-local-langfuse-salt-dev-only}
+      # Encrypts integration credentials at rest. Rotating it invalidates every
+      # encrypted row — generate once per environment and keep it stable.
+      - ENCRYPTION_KEY=${LANGFUSE_ENCRYPTION_KEY:-}
+      - TELEMETRY_ENABLED=false
+      # Pin V8's old-space ceiling instead of letting Node derive it from
+      # mem_limit. Auto-derivation is what made this container unfixable-by-
+      # observation under v3: raise the cap, V8 raises the heap, it fills the
+      # heap, it dies again one notch higher. Explicit heap + a cap ~25% above
+      # it makes both numbers mean something.
+      - NODE_OPTIONS=--max-old-space-size=${LANGFUSE_WEB_HEAP_MB:-1024}
+      # --- ClickHouse (traces, observations, scores) ---
+      - CLICKHOUSE_URL=http://langfuse-clickhouse:8123
+      - CLICKHOUSE_MIGRATION_URL=clickhouse://langfuse-clickhouse:9000
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-clickhouse}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-}
+      - CLICKHOUSE_CLUSTER_ENABLED=false
+      # --- Redis (ingestion queue + cache) — shared redis service ---
+      # BullMQ requires maxmemory-policy=noeviction (Redis' default; do not set
+      # an eviction policy in REDIS_ARGS or queued events get dropped silently).
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_AUTH=${REDIS_AUTH:-}
+      # --- S3 / MinIO (event + media uploads) ---
+      # Media endpoint is the in-network address, so browser-side direct media
+      # upload is unavailable. Traces/observations are unaffected. To enable it,
+      # expose MinIO and point LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT at that URL.
+      - LANGFUSE_S3_EVENT_UPLOAD_BUCKET=langfuse
+      - LANGFUSE_S3_EVENT_UPLOAD_REGION=auto
+      - LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minio}
+      - LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-}
+      - LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT=http://langfuse-minio:9000
+      - LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE=true
+      - LANGFUSE_S3_EVENT_UPLOAD_PREFIX=events/
+      - LANGFUSE_S3_MEDIA_UPLOAD_BUCKET=langfuse
+      - LANGFUSE_S3_MEDIA_UPLOAD_REGION=auto
+      - LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minio}
+      - LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-}
+      - LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT=http://langfuse-minio:9000
+      - LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE=true
+      - LANGFUSE_S3_MEDIA_UPLOAD_PREFIX=media/
+      # --- First-boot seeding (local dev only — ignored after the first start) ---
+      - LANGFUSE_INIT_ORG_ID
+      - LANGFUSE_INIT_ORG_NAME
+      - LANGFUSE_INIT_PROJECT_ID
+      - LANGFUSE_INIT_PROJECT_NAME
+      - LANGFUSE_INIT_PROJECT_PUBLIC_KEY
+      - LANGFUSE_INIT_PROJECT_SECRET_KEY
+      - LANGFUSE_INIT_USER_EMAIL
+      - LANGFUSE_INIT_USER_NAME
+      - LANGFUSE_INIT_USER_PASSWORD
+    ports:
+      - "${LANGFUSE_BIND:-127.0.0.1}:3030:3000"
+    # 2560m = the 2048m V8 heap above + ~500m for native/buffers/non-heap.
+    # v4 needs materially more than v3 did here: 1536m (the v3 fix) still
+    # crash-looped, dying at a 756 MB heap. Verified 2026-08-06.
+    mem_limit: ${LANGFUSE_WEB_MEM:-1536m}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      infra:
+        # Apps reach Langfuse at http://langfuse:3000 on the infra network.
+        aliases:
+          - langfuse
+    labels:
+      - "traefik.enable=${LANGFUSE_TRAEFIK:-false}"
+      - "traefik.docker.network=infra"
+      - "traefik.http.routers.langfuse.rule=Host(`${LANGFUSE_DOMAIN:-langfuse.localhost}`)"
+      - "traefik.http.routers.langfuse.entrypoints=websecure"
+      - "traefik.http.routers.langfuse.tls=${LANGFUSE_TLS:-true}"
+      # No certresolver label on purpose. An empty `certresolver=` silently
+      # invalidates the whole router (traefik drops it — the symptom is a bare
+      # 404 with nothing in the traefik log), and locally the cert comes from
+      # the mkcert file in dynamic/tls.yml, not from ACME. On a server, add the
+      # resolver in dynamic/routing-langfuse.yml the way the other prod
+      # services do, rather than reintroducing a conditionally-empty label.
+      - "traefik.http.services.langfuse.loadbalancer.server.port=3000"
+    healthcheck:
+      # $$HOSTNAME, not localhost: Next.js 16 binds the server to the container
+      # hostname, so 127.0.0.1:3000 inside the container is connection-refused
+      # even while the app is serving fine on the published port.
+      test: ["CMD-SHELL", "wget -q -O- http://$$HOSTNAME:3000/api/public/health >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:${LANGFUSE_IMAGE_TAG:-4}
+    container_name: langfuse-worker
+    restart: always
+    profiles: [langfuse]
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/langfuse
+      - SALT=${LANGFUSE_SALT:-local-langfuse-salt-dev-only}
+      - ENCRYPTION_KEY=${LANGFUSE_ENCRYPTION_KEY:-}
+      - TELEMETRY_ENABLED=false
+      - CLICKHOUSE_URL=http://langfuse-clickhouse:8123
+      - CLICKHOUSE_MIGRATION_URL=clickhouse://langfuse-clickhouse:9000
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-clickhouse}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-}
+      - CLICKHOUSE_CLUSTER_ENABLED=false
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_AUTH=${REDIS_AUTH:-}
+      - LANGFUSE_S3_EVENT_UPLOAD_BUCKET=langfuse
+      - LANGFUSE_S3_EVENT_UPLOAD_REGION=auto
+      - LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minio}
+      - LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-}
+      - LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT=http://langfuse-minio:9000
+      - LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE=true
+      - LANGFUSE_S3_EVENT_UPLOAD_PREFIX=events/
+      - LANGFUSE_S3_MEDIA_UPLOAD_BUCKET=langfuse
+      - LANGFUSE_S3_MEDIA_UPLOAD_REGION=auto
+      - LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minio}
+      - LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-}
+      - LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT=http://langfuse-minio:9000
+      - LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE=true
+      - LANGFUSE_S3_MEDIA_UPLOAD_PREFIX=media/
+    # 2g. 512m was enough for the v3 worker but NOT the v4 one: it finishes its
+    # migrations and evaluator/dashboard seeding, then dies with "Ineffective
+    # mark-compacts near heap limit" at a ~248 MB heap — V8 derives its old-space
+    # ceiling from the cgroup limit, so a 512m cap yields a ~256 MB heap. Verified
+    # by crash-loop on 2026-08-06 (exit 134/SIGABRT). Measured steady state after
+    # the fix is ~1.1 GiB, which is why this is 2g and not 1536m.
+    mem_limit: ${LANGFUSE_WORKER_MEM:-896m}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - infra
+    labels: ["traefik.enable=false"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # v4 needs >= 25.12 for lightweight updates, the JSON type and full-text
+  # search. 25.12 is what upstream's own compose ships and tests against the
+  # :4 images; 26.4 is the docs' "recommended" and the next step up.
+  langfuse-clickhouse:
+    image: clickhouse/clickhouse-server:25.12@sha256:8a790dd3468db22b1d4e7b18a176f378ff5ff6053b9c48dd4ea1fa71a24c5ba6
+    container_name: langfuse-clickhouse
+    restart: always
+    profiles: [langfuse]
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_logs:/var/log/clickhouse-server
+      # Bounds ClickHouse's internal caches. Without this its mem_limit acts as
+      # a reservation, not a cap — see the file's header for why.
+      - ./clickhouse/low-memory.xml:/etc/clickhouse-server/config.d/low-memory.xml:ro
+    ports:
+      - "${CLICKHOUSE_BIND:-127.0.0.1}:8123:8123"
+    # 1536m, up from the 512m coarse backstop used under v3 — v4 leans on
+    # ClickHouse harder (full-text search, JSON type). Measured ~600 MiB at idle
+    # with a single project. If you see ClickHouse OOMKilled, tune
+    # max_server_memory_usage rather than only raising this.
+    mem_limit: ${LANGFUSE_CLICKHOUSE_MEM:-896m}
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    networks:
+      - infra
+    labels: ["traefik.enable=false"]
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  langfuse-minio:
+    image: minio/minio:latest@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    container_name: langfuse-minio
+    restart: always
+    profiles: [langfuse]
+    entrypoint: sh
+    # Create the 'langfuse' bucket before starting the server.
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
+    ports:
+      # Console. Loopback-only by default; set MINIO_BIND=0.0.0.0 to browse it.
+      - "${MINIO_BIND:-127.0.0.1}:9091:9001"
+    volumes:
+      - minio_data:/data
+    # Measured ~77 MiB serving Langfuse's event/media blobs.
+    mem_limit: ${LANGFUSE_MINIO_MEM:-256m}
+    networks:
+      - infra
+    labels: ["traefik.enable=false"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   umami:
     image: docker.umami.is/umami-software/umami:postgresql-latest@sha256:e3f80c0625aad7179b49da27d475357cabb1068b8cacd9a792cfd6966888b123
     container_name: umami
@@ -350,3 +731,11 @@ volumes:
     name: ${NEO4J_VOLUME:-neo4j_data}
   neo4j_logs:
     name: ${NEO4J_LOGS_VOLUME:-neo4j_logs}
+  clickhouse_data:
+    name: ${CLICKHOUSE_VOLUME:-langfuse_clickhouse_data}
+  clickhouse_logs:
+    name: ${CLICKHOUSE_LOGS_VOLUME:-langfuse_clickhouse_logs}
+  minio_data:
+    name: ${MINIO_VOLUME:-langfuse_minio_data}
+  phoenix_data:
+    name: ${PHOENIX_VOLUME:-phoenix_data}
