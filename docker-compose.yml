@@ -606,11 +606,27 @@ services:
       NEO4J_AUTH: ${NEO4J_AUTH:-neo4j/neo4j-local-dev-password}
       NEO4J_PLUGINS: '["apoc"]'
       NEO4J_dbms_security_procedures_unrestricted: 'apoc.*'
+      # Backups. `neo4j-admin database dump` refuses while the DB is running,
+      # and the online `neo4j-admin backup` is Enterprise-only — this is
+      # Community. So without this line every backup costs downtime, which in
+      # practice means no backups. APOC's export writes server-side to
+      # /backups (mounted below) and emits index DDL alongside the data; a
+      # restore without indexes is correct and unusably slow.
+      # See TheBrain docs/operations/dr.md §3.
+      NEO4J_apoc_export_file_enabled: 'true'
       NEO4J_server_memory_heap_initial__size: 512m
       NEO4J_server_memory_heap_max__size: 1G
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
+      # APOC writes exports here. Mounted UNDER the import dir on purpose:
+      # APOC resolves export paths relative to it and refuses absolute ones
+      # unless you set apoc.import.file.use_neo4j_config=false, which also
+      # unsandboxes imports. Keeping the sandbox and moving the mount is the
+      # cheaper trade. Export with a RELATIVE path: 'backups/graph.cypher'.
+      # Named volume rather than a bind mount so a dump can't be silently lost
+      # to a host path that stops existing.
+      - neo4j_backups:/var/lib/neo4j/import/backups
     networks:
       - infra
     healthcheck:
@@ -731,6 +747,8 @@ volumes:
     name: ${NEO4J_VOLUME:-neo4j_data}
   neo4j_logs:
     name: ${NEO4J_LOGS_VOLUME:-neo4j_logs}
+  neo4j_backups:
+    name: ${NEO4J_BACKUPS_VOLUME:-neo4j_backups}
   clickhouse_data:
     name: ${CLICKHOUSE_VOLUME:-langfuse_clickhouse_data}
   clickhouse_logs:
