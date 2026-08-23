@@ -64,7 +64,7 @@ usage() {
     echo "Usage: ./deploy.sh --target <target> <project|infra|--all>"
     echo ""
     echo "Targets:"
-    echo "  do:<droplet>   DigitalOcean (e.g. do:zora)"
+    echo "  do:<ssh-alias>  Remote server, e.g. do:zora (Hetzner). 'do:' is a legacy prefix from the DigitalOcean era; the part after the colon is your SSH alias from ~/.ssh/config."
     echo "  aws            AWS (aws01)"
     echo ""
     echo "Examples:"
@@ -141,10 +141,10 @@ deploy_project() {
 
     # Pick the compose file. Order of preference:
     #   1. docker-compose.<target_key>.yml — host-specific (e.g. aws01,
-    #      isidora). Use this when a project's prod routing differs by
-    #      target (e.g. Marie on aws01 needs path-based + HTTP, on DO
-    #      needs subdomain + HTTPS — labels can't sanely be parametrized
-    #      in a single file).
+    #      zora). Use this when a project's prod routing differs by
+    #      target (e.g. Marie on aws01 needs path-based + HTTP, on zora
+    #      needs path-based under thecollective.lostriver.llc + HTTPS —
+    #      labels can't sanely be parametrized in a single file).
     #   2. docker-compose.prod.yml — generic prod compose, works for any
     #      server. The default for projects whose prod config is uniform.
     #   3. docker-compose.yml — fallback for projects that haven't split

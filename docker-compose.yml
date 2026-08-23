@@ -1,8 +1,8 @@
 # =============================================================================
 # Shared Infrastructure — All Environments
 # =============================================================================
-# One compose for local dev, DigitalOcean, and AWS.
-# Differences live in .env — see .env.example.localhost and .env.example.do.
+# One compose for local dev, Hetzner (zora), and AWS.
+# Differences live in .env — see .env.example.
 #
 # Usage:
 #   docker compose up -d                        # Start (reads .env)
