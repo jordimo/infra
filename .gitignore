@@ -8,7 +8,7 @@ certs/
 # Committed: dynamic/dynamic.yml, dynamic/middlewares.yml
 dynamic/tls.yml
 dynamic/routing-*.yml
-# Edge sign-in: mounted from aws01-stack (Docker leaves an empty placeholder here) and its local secrets
+# Edge sign-in: mounted from aws01-stack; dynamic/edge.yml is an empty placeholder you must create by hand so the single-file mount has a mountpoint (see aws01-stack edge/README.md). Plus local secrets
 dynamic/edge.yml
 edge.env
 edge-exceptions.txt
