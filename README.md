@@ -6,7 +6,7 @@ One `docker-compose.yml`, all environments. Differences live in `.env`.
 
 ## What this repo provides
 
-Traefik, PostgreSQL (pgvector), Redis, Langfuse, and Mailpit (local only) — running on every environment with the same conventions. Projects connect via the `infra` Docker network.
+Traefik, PostgreSQL (pgvector), Redis, and Mailpit (local only) — running on every environment with the same conventions. Projects connect via the `infra` Docker network. Phoenix (LLM observability) is the standard across all hosts, opt-in via the `phoenix` compose profile.
 
 ### Shared services
 
@@ -14,7 +14,7 @@ Traefik, PostgreSQL (pgvector), Redis, Langfuse, and Mailpit (local only) — ru
 |----------|--------------------|--------------------------|---------------------------------|
 | Postgres | `postgres:5432`    | `localhost:5432`         | Internal only                   |
 | Redis    | `redis:6379`       | `localhost:6379`         | Internal only                   |
-| Langfuse | `langfuse:3000`    | `https://langfuse.local` | SSH tunnel `localhost:3030`     |
+| Phoenix  | `phoenix:6006`     | `https://phoenix.localhost`  | SSH tunnel `localhost:6006` |
 | Traefik  | N/A                | `https://*.local`        | Ports 80/443                    |
 | Mailpit  | `mailpit:1025`     | `localhost:8025`         | N/A (local only)                |
 
@@ -48,7 +48,44 @@ cp .env.example.local .env
 docker compose --profile local up -d
 ```
 
-Services: Traefik (`:8080`), Postgres (`:5432`), Redis (`:6379`), Langfuse (`:3030`), Mailpit (`:8025`)
+Services: Traefik (`:8080`), Postgres (`:5432`), Redis (`:6379`), Mailpit (`:8025`)
+
+### LLM observability
+
+**Phoenix** is the standard on every host — local, zora and aws01 all run the
+same thing. One container against the shared Postgres, ~400 MiB:
+
+```bash
+# one-time, per host
+docker exec postgres createdb -U postgres phoenix
+openssl rand -hex 32   # x2 → PHOENIX_SECRET, PHOENIX_ADMIN_SECRET (must differ)
+
+# then set COMPOSE_PROFILES=local,phoenix in .env and:
+./start.sh
+```
+
+Apps send traces in-cluster to `http://phoenix:6006/v1/traces` (OTLP/HTTP,
+**protobuf** — JSON returns 415) or `phoenix:4317` (gRPC), with
+`Authorization: Bearer $PHOENIX_ADMIN_SECRET`. Auth is enabled by default here;
+Phoenix ships with it off.
+
+On a server leave `PHOENIX_TRAEFIK=false` and reach the UI over a tunnel:
+`ssh -L 6006:localhost:6006 <host>`.
+
+Phoenix is not a cut-down option. Verified against its live schema: a model
+price catalog (268 models, 797 token prices, input/output/cache-read/cache-write
+rates, current through `claude-opus-5` and `gpt-5.4`), prompt management with
+versions and labels, plus datasets, experiments and evaluators. The one real
+difference from Langfuse is licensing — Elastic 2.0, not MIT.
+
+**Langfuse v4** is still in the compose behind a `langfuse` profile, working and
+tested, but is no longer the default anywhere — running a different stack per
+host was the thing we were trying to stop doing. It remains the better choice in
+two cases: if MIT licensing matters, or at trace volumes where Phoenix's
+Postgres-backed span storage would stop keeping up (ClickHouse exists in
+Langfuse precisely for that). Expect ~1.85 GiB across four containers plus
+ClickHouse, MinIO and Redis. Its `LANGFUSE_ENCRYPTION_KEY` cannot be rotated
+without invalidating every encrypted row.
 
 ### Server (DO/AWS)
 
@@ -77,7 +114,7 @@ Primary production server. Host-based routing with Let's Encrypt TLS (DNS-01 via
 **SSH:**
 ```bash
 ssh isidora                            # Shell
-ssh -L 3030:localhost:3030 isidora     # Langfuse UI
+ssh -L 6006:localhost:6006 isidora     # Phoenix UI
 ssh -L 8080:localhost:8080 isidora     # Traefik dashboard
 ```
 

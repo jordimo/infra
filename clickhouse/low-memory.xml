@@ -1,0 +1,52 @@
+<?xml version="1.0"?>
+<!--
+  ClickHouse tuning for a small, shared host.
+
+  Mounted into /etc/clickhouse-server/config.d/ so it overlays the shipped
+  config.xml. Every value here exists because ClickHouse's defaults assume it
+  owns a dedicated database server: out of the box it advertises a 5 GiB mark
+  cache, an 8 GiB uncompressed cache, and 5 GiB each of index-mark and
+  primary-index cache. Those are lazy allocations, so a fresh install looks
+  small and then grows into whatever ceiling it was given — which is why the
+  container's mem_limit behaves like a reservation rather than a cap.
+
+  Setting the caches explicitly is what actually bounds it. For a Langfuse
+  install with modest trace volume these are still generously sized; the working
+  set is small and ClickHouse re-reads from disk on a miss.
+
+  Raise mark_cache_size first if the Langfuse UI feels slow on large date
+  ranges — that is the cache that matters for query latency here.
+-->
+<clickhouse>
+    <!-- Query caches. uncompressed_cache is off because use_uncompressed_cache
+         defaults to 0 per-query anyway, so the 8 GiB default was pure ceiling. -->
+    <mark_cache_size>268435456</mark_cache_size>          <!-- 256 MiB (was 5 GiB) -->
+    <uncompressed_cache_size>0</uncompressed_cache_size>  <!--   0     (was 8 GiB) -->
+    <index_mark_cache_size>134217728</index_mark_cache_size>       <!-- 128 MiB (was 5 GiB) -->
+    <primary_index_cache_size>134217728</primary_index_cache_size> <!-- 128 MiB (was 5 GiB) -->
+
+    <!-- Hard ceiling for the server process. Set explicitly rather than derived
+         from the cgroup limit (0.9x), so the number is legible and does not
+         silently follow mem_limit upward. -->
+    <max_server_memory_usage>671088640</max_server_memory_usage>   <!-- 640 MiB -->
+
+    <!-- Single-tenant workload: Langfuse's web + worker are the only clients. -->
+    <max_concurrent_queries>32</max_concurrent_queries>
+
+    <!-- Internal telemetry tables. Each is a background buffer plus a MergeTree
+         that grows forever on disk. Useful when tuning ClickHouse itself,
+         wasteful when it is a black box under an app. -->
+    <metric_log remove="1"/>
+    <asynchronous_metric_log remove="1"/>
+    <trace_log remove="1"/>
+    <query_thread_log remove="1"/>
+    <text_log remove="1"/>
+
+    <!-- Keep query_log (Langfuse surfaces slow-query info) but bound its growth. -->
+    <query_log>
+        <database>system</database>
+        <table>query_log</table>
+        <flush_interval_milliseconds>30000</flush_interval_milliseconds>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </query_log>
+</clickhouse>
