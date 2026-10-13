@@ -50,6 +50,7 @@ services:
       - --ping=true
     environment:
       - CF_DNS_API_TOKEN=${CF_DNS_API_TOKEN:-}
+      - EDGE_HOST=${EDGE_HOST:-martin.localhost}
     ports:
       - "${HTTP_BIND:-0.0.0.0}:80:80"
       - "${HTTPS_BIND:-0.0.0.0}:443:443"
@@ -57,6 +58,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./dynamic:/etc/traefik/dynamic:ro
+      - ${EDGE_TRAEFIK_FILE:-../MARTIN/aws01-stack/edge/traefik/edge.yml}:/etc/traefik/dynamic/edge.yml:ro
       - ./certs:/etc/traefik/certs:ro
       - traefik_letsencrypt:/letsencrypt
     networks:
